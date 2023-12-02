@@ -1,0 +1,15 @@
+# YAML
+plain: Scroll of Remove Curse
+single-quoted: 'EASY_KNOW'
+double-quoted: "?"
+literal: |    # Borrowed from http://www.kersbergen.com/flump/religion.html
+  by hjw              ___
+     __              /.-.\
+    /  )_____________\\  Y
+   /_ /=== == === === =\ _\_
+  ( /)=== == === === == Y   \
+   `-------------------(  o  )
+                        \___/
+folded: >
+  It removes all ordinary curses from all equipped items.
+  Heavy or permanent curses are unaffected.

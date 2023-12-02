@@ -1,0 +1,47 @@
+chomp_default1: |
+  A line
+
+  Another line. No trailing empty lines
+chomp_default2: |
+  A line
+
+  Another line. Note the 1 trailing empty lines
+
+chomp_default3: |
+  A line
+
+  Another line. Note the 3 trailing empty lines
+
+
+
+chomp_plus1: |+
+  A line
+
+  Another line. No trailing empty lines
+chomp_plus2: |+
+  A line
+
+  Another line. Note the 1 trailing empty lines
+
+chomp_plus3: |+
+  A line
+
+  Another line. Note the 3 trailing empty lines
+
+
+
+chomp_minus1: |-
+  A line
+
+  Another line. No trailing empty lines
+chomp_minus2: |-
+  A line
+
+  Another line. Note the 1 trailing empty lines
+
+chomp_minus3: |-
+  A line
+
+  Another line. Note the 3 trailing empty lines
+
+

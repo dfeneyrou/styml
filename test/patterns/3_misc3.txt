@@ -1,0 +1,13 @@
+{
+  'steps': [
+            {'command': 'echo "--- Install gems"\n'
+                         'bundle install\n'
+                         'echo "--- Build the app"\n'
+                         'bundle exec fastlane build\n',
+              'key': 'build',
+              'label': 'Build the app'},
+              
+            {'ttooo': 'otkok'}
+           ]
+}
+

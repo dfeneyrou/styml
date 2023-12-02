@@ -1,0 +1,9 @@
+steps:
+  - label: "Build the app"
+    key: "build"
+    command: |  # eoeoeoeoeoeoo
+      echo "--- Install gems"
+      bundle install
+      echo "--- Build the app"
+      bundle exec fastlane build
+  - ttooo: otkok

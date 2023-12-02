@@ -1,0 +1,9 @@
+{
+  'fixed indent literal string': '    The start of the first line value\n'
+                                 'does not determine the indent of\n'
+                                 'the multiline string.\n'
+                                 '    Its value is provided in the header as\n'
+                                 'a delta compared to the parent indentation.\n'
+                                 'Of course, it shall be one or more.\n'
+}
+

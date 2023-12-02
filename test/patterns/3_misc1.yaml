@@ -1,0 +1,10 @@
+notify:
+  - slack:
+      channels: "#build-notifs"
+      message: > # This message will be folded, i.e. newlines will be replaced by spaces.
+        Your build have failed. You might want to check your
+        CI logs for more details about the failure, or ping
+        your friendly neighbourhood Infrastructure Engineer
+        on call to ask for help.
+    if: build.state == "failed"
+    

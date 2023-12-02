@@ -1,0 +1,5 @@
+literal string: |
+  unescaped lines, which
+  preserves new lines and
+  special characters like ' (quote)
+  or " (double quote)

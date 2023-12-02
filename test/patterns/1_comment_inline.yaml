@@ -1,0 +1,10 @@
+  - yaml: # Skip this comment
+      name: "YAML Ain't Markup Language" #string [literal]
+      type: awesome #string [literal]
+      born: 2001 #number [literal]
+      comment test 1: "a string wi#th a sharp inside"
+      comment test 2: "a string wi#th a sharp inside" # and one outside
+      comment test 3: 'a string wi#th a sharp inside'
+      comment test 4: 'a string wi#th a sharp inside'# and one outside
+      comment test 5: "a string wi#th' a sharp inside"# "and one outside
+      comment test 6: 'a string "wi#th a sharp inside'# 'and one outside

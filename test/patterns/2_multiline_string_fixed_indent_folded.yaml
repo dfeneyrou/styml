@@ -1,0 +1,7 @@
+fixed indent folded string: >5
+         The start of the first line value
+     does not determine the indent of
+     the multiline string.
+         Its value is provided in the header as
+     a delta compared to the parent indentation.
+     Of course, it shall be one or more.

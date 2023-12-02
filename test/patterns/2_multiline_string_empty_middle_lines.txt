@@ -1,0 +1,3 @@
+{
+    "empty middle lines": "\nThis line defines the indentation, not the previous one.      \nThis line shall be a new one.\nNote this new line and the previous one due to a space character.\n\nHere are 2 preceeding empty new lines. End of the test.\n"
+}

@@ -1,0 +1,28 @@
+company: spacelift
+
+# key: value is an array [sequence]
+"domain" :
+  - devops  # test comment
+  - devsecops
+tutorial  :
+  - direct
+  - yaml:
+      name: "YAML Ain't Markup Language" #string [literal]
+      type: awesome #string [literal]
+      born: 2001 #number [literal]
+      comment test 1: "a string wi#th a sharp inside"
+      comment test 2: "a string wi#th a sharp inside" # and one outside
+      comment test 3: 'a string wi#th a sharp inside'
+      comment test 4: 'a string wi#th a sharp inside'# and one outside
+      comment test 5: "a string wi#th' a sharp inside"# "and one outside
+      comment test 6: 'a string "wi#th a sharp inside'# 'and one outside
+  - json:
+      - name JavaScript Object Notation #string [literal]
+      - type great #string [literal]
+      - "born TOOO #number [literal]   "
+  - xml:
+      - name: Extensible Markup Language #string [literal]
+      - type: good #string [literal]
+      - born: 1996 #number [literal]
+author: omkarbirade
+published: true

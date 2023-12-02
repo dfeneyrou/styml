@@ -1,0 +1,6 @@
+ empty first line: >
+
+   This line defines the indentation, not the previous one.      
+      This line has leading spaces which is a kind of delimited text area.
+   This is also the case in YAML.
+   And this is a bit overcomplicated...

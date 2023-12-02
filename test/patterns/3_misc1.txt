@@ -1,0 +1,10 @@
+{
+  'notify':
+    [
+      {'if': 'build.state == "failed"',
+       'slack': {'channels': '#build-notifs',
+                 'message': 'Your build have failed. You might want to '
+                            'check your CI logs for more details about '
+                            'the failure, or ping your friendly '
+                            'neighbourhood Infrastructure Engineer on '
+                            'call to ask for help.\n'}}]}

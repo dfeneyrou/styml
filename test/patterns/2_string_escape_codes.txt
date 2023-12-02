@@ -1,0 +1,6 @@
+['a \\" quote without escaping',
+  'a direct " quote inside',
+  'an escaped " quote inside',
+  'an escaped \\" quote inside',
+  "an escaped ' single quote inside",
+  "an escaped ' single quote inside with double sign"]

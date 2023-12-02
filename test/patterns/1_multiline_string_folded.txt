@@ -1,0 +1,4 @@
+{'folded string': 'It is a line artificially cut in multiple lines. New lines '
+                   'are turned into spaces in this case.\n'
+                   'Only fully blank lines create a new line.\n'}
+

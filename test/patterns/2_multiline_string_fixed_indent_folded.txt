@@ -1,0 +1,3 @@
+{
+  "fixed indent folded string": "    The start of the first line value\ndoes not determine the indent of the multiline string.\n    Its value is provided in the header as\na delta compared to the parent indentation. Of course, it shall be one or more.\n"
+}

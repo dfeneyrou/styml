@@ -1,0 +1,9 @@
+[{'yaml': {'born': '2001',
+           'comment test 1': 'a string wi#th a sharp inside',
+           'comment test 2': 'a string wi#th a sharp inside',
+           'comment test 3': 'a string wi#th a sharp inside',
+           'comment test 4': 'a string wi#th a sharp inside',
+           'comment test 5': "a string wi#th' a sharp inside",
+           'comment test 6': 'a string "wi#th a sharp inside',
+           'name': "YAML Ain't Markup Language",
+           'type': 'awesome'}}]

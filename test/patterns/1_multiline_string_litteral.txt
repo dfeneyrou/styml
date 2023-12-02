@@ -1,0 +1,5 @@
+{'literal string': 'unescaped lines, which\n'
+                    'preserves new lines and\n'
+                    "special characters like ' (quote)\n"
+                    'or " (double quote)\n'}
+

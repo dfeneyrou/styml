@@ -1,0 +1,13 @@
+[
+  'Hello',
+  'Hello',
+  'Hello',
+  '"Hello", they said.',
+  '# this is not a comment but a string',
+  'Smile \u263A',
+  'column1\tcolumn2\tcolumn3\n',
+  '\x0d\x0a is the same as \r\n, namely CRLF',
+  'Single quotes means \\ is not an escape character ¯\\_(ツ)_/¯',
+  "Except there's still a way to include the single quote character into those.",
+  "Multiline string\nin an array"
+]

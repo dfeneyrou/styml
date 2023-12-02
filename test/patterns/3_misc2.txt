@@ -1,0 +1,15 @@
+ {
+  'double-quoted': '?',
+  'folded': 'It removes all ordinary curses from all equipped items. Heavy or '
+            'permanent curses are unaffected.\n',
+  'literal': 'by hjw              ___\n'
+             '   __              /.-.\\\n'
+             '  /  )_____________\\\\  Y\n'
+             ' /_ /=== == === === =\\ _\\_\n'
+             '( /)=== == === === == Y   \\\n'
+             ' `-------------------(  o  )\n'
+             '                      \\___/\n',
+  'plain': 'Scroll of Remove Curse',
+  'single-quoted': 'EASY_KNOW'
+ }
+

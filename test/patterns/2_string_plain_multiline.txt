@@ -1,0 +1,7 @@
+{
+ 'plain multiline' : 'this is the first line which continues here.',
+ 'another plain multiline' : {
+     'starting with empty one and weird indent' : "the first empty line does not matter and leading spaces do not matter either"
+  }
+}
+

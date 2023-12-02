@@ -1,0 +1,12 @@
+ empty middle lines: >
+
+   This line defines the indentation, not the previous one.      
+
+   This line shall be a new one.
+
+   Note this new line and the previous one due to a space character.
+
+
+   Here are 2 preceeding empty new lines.
+   End of the test.
+  
