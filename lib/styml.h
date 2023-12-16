@@ -1408,6 +1408,27 @@ class Node
     }
 
     template<class T>
+    T as(const T& defaultValue) const
+    {
+        assert(_context && _eltIdx < (uint32_t)_context->elements.size());
+        detail::Element* elt = &_context->elements[_eltIdx];
+
+        if (elt->getType() == MAP && !_nonExistingKey.empty()) { return defaultValue; }
+        if (elt->getType() != VALUE && elt->getType() != UNKNOWN) {
+            throwMessage<AccessException>("Access error: unable to cast this node as it is not of type 'Value' but %s",
+                                          to_string().c_str());
+        }
+        T typedValue;
+        try {
+            convert<T>::decode((elt->getType() == VALUE) ? _context->getString(elt->getStringIdx()) : "", typedValue);
+        } catch (ConvertException& e) {
+            throwMessage<AccessException>("Access error: decoding error when accessing '%s' with 'as()':\n  %s", to_string().c_str(),
+                                          e.what());
+        }
+        return typedValue;
+    }
+
+    template<class T>
     Node& operator=(const T& typedValue)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());

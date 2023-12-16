@@ -65,7 +65,7 @@ On the other side, trading complexity for benefits is exactly the point...
 Measures are all done on the same laptop (i7-11800H @2.30GHz on Linux).  
 Results show that `styml` leverages the gained simplification: it is much faster and memory efficient than both libraries above, with multiple order of magnitude on the access timings.
 
-Some key details about the implementationleading to these results:
+Some key details about the implementation leading to these results:
  - Use of arena allocator to store and work efficiently with strings 
  - Use of high performance hashtable for O(1) access time for maps
  - Use of efficient storage and document tree representation to achieve low memory footprint
@@ -130,12 +130,12 @@ _Building (=writing) a document programmatically from scratch through the API, i
 > `rapidyaml` does not take benefit from the random access property of sequences.
 
 _Reading fields of a document programmatically through the API, in millions of items per second:_
-| Filename            | yaml-cpp                | rapidyaml               | styml             | Speed factor     |
-|---------------------|:-----------------------:|:-----------------------:|:-----------------:|:----------------:|
-| Map of 10000        | 0.014 Mi/s              | 0.053 Mi/s              | **42.553 Mi/s**   | 3000x and 800x   |
-| Sequence of 10000   | 37.037 Mi/s             | 0.076 Mi/s              | **~1000.000 Mi/s** | ~30x and ~10000x |
-| Map of 1000000      | _(quadratic)_ | _(quadratic)_ | **23.317 Mi/s**   | N/A              |
-| Sequence of 1000000 | 25.757 Mi/s             | _(quadratic)_ | **745.712 Mi/s**  | 29x and N/A      |
+| Filename            | yaml-cpp      | rapidyaml     | styml              | Speed factor     |
+|---------------------|:-------------:|:-------------:|:------------------:|:----------------:|
+| Map of 10000        | 0.014 Mi/s    | 0.053 Mi/s    | **42.553 Mi/s**    | 3000x and 800x   |
+| Sequence of 10000   | 37.037 Mi/s   | 0.076 Mi/s    | **~1000.000 Mi/s** | ~30x and ~10000x |
+| Map of 1000000      | _(quadratic)_ | _(quadratic)_ | **23.317 Mi/s**    | N/A              |
+| Sequence of 1000000 | 25.757 Mi/s   | _(quadratic)_ | **745.712 Mi/s**   | 29x and N/A      |
 
 > [!NOTE]
 > `rapidyaml` scales poorly with large structure access, and it handles sequences like maps, in a quadratic way.  
@@ -261,6 +261,7 @@ The `Node` API is restricted depending on its type, as shown in the table below 
 | `std::string keyName()`                     |       |          |     | X             |         |
 | `Node value()`                              |       |          |     | X             |         |
 | `as<T>()`                                   | X     |          |     | X (via value) |         |
+| `as<T>(const T& deflt)`                     | X     |          |     | X (via value) |         |
 | `iterator begin()`                          |       | X        | X   |               |         |
 | `iterator end()`                            |       | X        | X   |               |         |
 | `size_t size()`                             |       | X        | X   |               |         |
