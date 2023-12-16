@@ -118,12 +118,12 @@ The emission speed is the size of the input file divided by the time to emit it 
 ### Document access speed
 
 _Building (=writing) a document programmatically from scratch through the API, in millions of items per second:_
-| Filename            | yaml-cpp              | rapidyaml               | styml           | Speed factor  |
-|---------------------|:---------------------:|:-----------------------:|:---------------:|:-------------:|
-| Map of 10000        | 0.014 Mi/s            | 0.053921 Mi/s           | **9.091 Mi/s**  | 649x and 168x |
-| Sequence of 10000   | 4.517 Mi/s            | 0.075001 Mi/s           | **42.194 Mi/s** | 9x and 562x   |
-| Map of 1000000      | (quadratic, too slow) | _(quadratic, too slow)_ | **7.875 Mi/s**  | N/A           |
-| Sequence of 1000000 | 3.700 Mi/s            | _(quadratic, too slow)_ | **39.569 Mi/s** | 10x and N/A   |
+| Filename            | yaml-cpp                | rapidyaml               | styml           | Speed factor  |
+|---------------------|:-----------------------:|:-----------------------:|:---------------:|:-------------:|
+| Map of 10000        | 0.014 Mi/s              | 0.053 Mi/s              | **9.091 Mi/s**  | 649x and 168x |
+| Sequence of 10000   | 4.517 Mi/s              | 0.075 Mi/s              | **42.194 Mi/s** | 9x and 562x   |
+| Map of 1000000      | _(quadratic, too slow)_ | _(quadratic, too slow)_ | **7.875 Mi/s**  | N/A           |
+| Sequence of 1000000 | 3.700 Mi/s              | _(quadratic, too slow)_ | **39.569 Mi/s** | 10x and N/A   |
 
 > [!NOTE]
 > Only `styml` has a O(1) access time per map field, others have a O(N) leading to quadratic time for a full build.  
@@ -205,7 +205,7 @@ MyPoint pointRead = root["custom struct"].as<MyPoint>();
 assert(memcmp(&pointRead, &point, sizeof(MyPoint)) == 0);
 ```
 
-> [!IMPORTANT]
+> [!WARNING]
 > - the conversion class shall be placed in the `styml` namespace
 > - it is up to the conversion class to throw the `ConvertException` in case of syntax errors
 > - design note: the usage of std::string and exceptions are used for convenience, not performance
