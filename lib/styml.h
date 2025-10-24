@@ -2322,7 +2322,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
 inline Document
 parse(const char* text, uint32_t textSize)
 {
-    //#define DEBUG_PARSING
+    // #define DEBUG_PARSING
 #ifdef DEBUG_PARSING
 #define dbgPrintf(...) printf(__VA_ARGS__)
     const char* tokenName[6] = {"KEY", "STRINGVALUE", "NEWLINE", "CARET", "COMMENT", "EOS"};
@@ -2573,7 +2573,7 @@ parse(const char* text, uint32_t textSize)
                 // If the parent is a key, pop it from the stack (container with only 1 child)
                 if (elements[parent.eltIdx].getType() == KEY) {
                     stack.pop_back();
-                    parent = stack.back();
+                    if (!stack.empty()) { parent = stack.back(); }
                 }
             } break;
 
@@ -2592,6 +2592,7 @@ parse(const char* text, uint32_t textSize)
 
         tokenLineNbr = lineNbr;
         tokenIdx     = startIdx;
+        if (startIdx >= textSize) { isEndOfInput = true; }
     }  // End of input
 
     return Document(context.release());
@@ -2606,7 +2607,7 @@ parse(const char* text)
 inline Document
 parse(const std::string& text)
 {
-    return parse(text.data(), (uint32_t)text.size());
+    return parse(text.c_str(), (uint32_t)text.size());
 }
 
 }  // Namespace styml
