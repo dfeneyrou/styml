@@ -24,6 +24,9 @@
 
 #include <stdio.h>
 
+#include <string>
+
+#include "styml.h"
 #include "test_main.h"
 
 using namespace styml;

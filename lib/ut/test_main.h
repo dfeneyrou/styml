@@ -24,11 +24,12 @@
 
 #pragma once
 
+#include <stdint.h>
+
 #include <chrono>
 
 #define DOCTEST_CONFIG_SUPER_FAST_ASSERTS 1
 #include "doctest.h"
-#include "styml.h"
 
 // Test duration getter
 enum class TestDuration { Short, Long, Longest };

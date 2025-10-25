@@ -22,11 +22,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
 
 #include <cstring>
+#include <string>
 
+#include "styml.h"
 #include "test_main.h"
 
 using namespace styml;

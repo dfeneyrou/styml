@@ -22,6 +22,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <algorithm>
+#include <chrono>
+#include <string>
+#include <vector>
+
+#include "styml.h"
 #include "test_main.h"
 
 using namespace styml;
