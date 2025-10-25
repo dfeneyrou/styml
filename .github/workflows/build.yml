@@ -39,7 +39,7 @@ jobs:
           make -j $(nproc)
       - name: Tests
         run: |
-          ./ci/check.py
+          ./ci/check_all.py
 
   address-sanitizer:
     name: Address sanitizer
@@ -59,7 +59,7 @@ jobs:
           make -j $(nproc)
       - name: Address sanitizer
         run: |
-          ./ci/check.py
+          ./ci/check_all.py
 
 
   tests-windows:
@@ -85,4 +85,4 @@ jobs:
       - name: Tests
         shell: cmd
         run: |
-          python ci\check.py -b=build64
+          python ci\check_all.py -b=build64
