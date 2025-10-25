@@ -43,7 +43,7 @@ def main():
     sourceDir = shell("git rev-parse --show-toplevel", check=True).stdout.split('\n')[0]
     os.chdir(sourceDir)
 
-    for cmd in ["check.py", "format.py%s" % ("" if doFix else " nofix"), "tidy.py%s" % (" fix" if doFix else "")]:
+    for cmd in ["check_all.py", "format.py%s" % ("" if doFix else " nofix"), "tidy.py%s" % (" fix" if doFix else "")]:
         print("--- Launching %s" % cmd)
         ret = shell('./ci/%s' % cmd, stdout=None)
         if ret.returncode != 0:

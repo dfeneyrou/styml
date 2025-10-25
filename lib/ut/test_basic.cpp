@@ -79,7 +79,6 @@ john: doe
 )END";
 
         std::string output;
-        if (true) return;  // @DEBUG
 
         printf("\n-----------------\n");
         Document root = parse(inputText);

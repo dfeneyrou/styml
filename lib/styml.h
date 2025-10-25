@@ -306,6 +306,7 @@ class Element
     }
     Element(Element&& rhs) noexcept
     {
+        // codechecker_suppress [bugprone-undefined-memory-manipulation]
         memcpy(this, (char*)&rhs, sizeof(Element));
         memset((char*)&rhs, 0, sizeof(Element));
     }
