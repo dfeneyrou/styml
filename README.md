@@ -1,6 +1,6 @@
 ![styml-logo](https://github.com/dfeneyrou/styml/blob/main/doc/images/styml-logo.png)
 
-[![Build and check](https://github.com/dfeneyrou/styml/actions/workflows/build.yml/badge.svg)](https://github.com/dfeneyrou/test/actions/workflows/build.yml)
+[![Build and check](https://github.com/dfeneyrou/styml/actions/workflows/build.yml/badge.svg)](https://github.com/dfeneyrou/styml/actions/workflows/build.yml)
 
 ## STYML : An efficient C++ single-header STrictYaML parser and emitter
 

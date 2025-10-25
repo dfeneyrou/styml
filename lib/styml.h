@@ -1219,7 +1219,7 @@ dumpAsYaml(Context* context)
                     }
                     sh.addChunk(text + lastPos, textSize - lastPos);
                     sh.addChar('\'');
-                } else if (true || newLineCount == 0) {  // No new line in the middle of the string?
+                } else {
                     if (lastIsKey) { sh.addChar(' '); }
                     sh.addChar('"');
                     uint32_t lastPos = 0;
@@ -1249,30 +1249,6 @@ dumpAsYaml(Context* context)
                     }
                     sh.addChunk(text + lastPos, textSize - lastPos);
                     sh.addChar('"');
-                } else {  // Literal
-                    if (textSize > 0) {
-                        sh.addChar(' ');
-                        sh.addChar('|');
-                        sh.addChar('2');
-                        if (text[textSize - 1] != '\n') {
-                            sh.addChar('-');
-                        } else {
-                            sh.addChar('+');
-                            textSize -= 1;  // Remove the last line feed
-                        }
-                    }
-                    // Copy line by line, inserting the prefix
-                    uint32_t lastPos = 0;
-                    uint32_t findPos = 0;
-                    while ((findPos = StringHelper::findFirstOf<1>(text, textSize, "\n", lastPos)) != UINT_MAX) {
-                        sh.addChar('\n');
-                        for (int i = 0; i < indent; ++i) sh.addChunk(indentStr, indentSize);
-                        sh.addChunk(text + lastPos, (uint32_t)(findPos - lastPos));
-                        lastPos = findPos + 1;  // Skip final \n
-                    }
-                    sh.addChar('\n');
-                    for (int i = 0; i < indent; ++i) sh.addChunk(indentStr, indentSize);
-                    sh.addChunk(text + lastPos, (uint32_t)(textSize - lastPos));
                 }
                 isFirst = false;
             }
