@@ -67,7 +67,7 @@ The API is quite straightforward, especially if you are familiar with `yaml-cpp`
 The two main sections are:
  
 <details>
-<summary> [Click to open] **A `parse` function to create a `Document` from a string** </summary>
+<summary> [Click to open] A `parse` function to create a `Document` from a string </summary>
 
 ### Document and parsing function
 
@@ -113,7 +113,7 @@ styml::Document parse(const char* text);
 
 
 <details>
-<summary> [Click to open] **A `Node` class representing a typed item in the YAML tree** </summary>
+<summary> [Click to open] A `Node` class representing a typed item in the YAML tree </summary>
 
 ### Node
 
@@ -170,7 +170,7 @@ The `Node` API is restricted depending on its type, as shown in the table below 
 Complementary information below:
 
 <details>
-<summary> [Click to open] **About exceptions** </summary>
+<summary> [Click to open] About exceptions </summary>
 
 ### Exceptions
 
@@ -187,7 +187,8 @@ They just contain a message (queried with standard `what()`) and can be of 3 kin
 </details>
 
 <details>
-<summary> [Click to open] **Examples** </summary>
+<summary> [Click to open] Examples </summary>
+
 ### Examples
 
 #### Parsing a YAML string and emitting it in Python
@@ -361,6 +362,7 @@ Building (=writing) a document programmatically from scratch through the API, in
 > `rapidyaml` does not even take benefit from the random access property of sequences.
 
 <br/>
+
 Reading fields of a document programmatically through the API, in millions of items per second:
 | Filename            | yaml-cpp      | rapidyaml     | styml              | Speed factor     |
 |---------------------|:-------------:|:-------------:|:------------------:|:----------------:|
@@ -379,7 +381,7 @@ Reading fields of a document programmatically through the API, in millions of it
 ### Extension with custom type
 
 <details>
-<summary> [Click to open] **Full description how to add a custom type** </summary>
+<summary> [Click to open] Full description how to add a custom type </summary>
 
 Converters from/to strings are built-in for usual types:
 ``` C++
@@ -443,12 +445,13 @@ MyPoint pointRead = root["custom struct"].as<MyPoint>();
 assert(memcmp(&pointRead, &point, sizeof(MyPoint)) == 0);
 ```
 
-> [!WARNING]
-> - the conversion class shall be placed in the `styml` namespace
-> - it is up to the conversion class to throw the `ConvertException` in case of syntax errors
-> - design note: the usage of std::string and exceptions are used for convenience, not performance
+> __IMPORTANT:__
+>  - the conversion class shall be placed in the `styml` namespace
+>  - it is up to the conversion class to throw the `ConvertException` in case of syntax errors
+>  - design note: the usage of std::string and exceptions are used for convenience, not performance
 
 </details>
+
 
 ### Support
 
