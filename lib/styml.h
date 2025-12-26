@@ -29,7 +29,7 @@
 // ==========================================================================================
 
 #define STYML_VERSION_MAJOR 1
-#define STYML_VERSION_MINOR 0
+#define STYML_VERSION_MINOR 1
 #define STYML_VERSION_PATCH 0
 #define STYML_VERSION       (STYML_VERSION_MAJOR * 100 * 100 + STYML_VERSION_MINOR * 100 + STYML_VERSION_PATCH)
 
@@ -148,7 +148,7 @@ inline void STYML_PRINTF_CHECK(3, 4) throwParsing(int lineNbr, const char* lineS
 
     // Add the line copy
     if (lengthToWrite > 0) {
-        alreadyWritten += std::min(snprintf(tmpStr + alreadyWritten, lengthToWrite + 1, "%s", lineStartPtr),
+        alreadyWritten += std::min(snprintf(tmpStr + alreadyWritten, (size_t)lengthToWrite + 1, "%s", lineStartPtr),
                                    lengthToWrite);  // +1 for zero termination
         if (lengthToWrite == LineCopySize) { alreadyWritten += snprintf(tmpStr + alreadyWritten, 4, "..."); }
         snprintf(tmpStr + alreadyWritten, 2, "\"");
@@ -216,9 +216,9 @@ struct convert<UnsignedInt, std::enable_if_t<std::is_integral<UnsignedInt>::valu
     static std::string encode(const UnsignedInt& typedValue) { return std::to_string(typedValue); }
     static void        decode(const char* strValue, UnsignedInt& typedValue)
     {
-        errno            = 0;
-        char*     endptr = nullptr;
-        long long number = strtoull(strValue, &endptr, 0);
+        errno                     = 0;
+        char*              endptr = nullptr;
+        unsigned long long number = strtoull(strValue, &endptr, 0);
         if (endptr == strValue || errno != 0) {
             throwMessage<ConvertException>("Convert error: unable to convert the string into an unsigned integer: '%s'", strValue);
         }
@@ -292,22 +292,21 @@ class Element
     static constexpr uint32_t TypeShift    = 29;                    // Type is on 3 bits
     static constexpr uint32_t CompoundMask = (1 << TypeShift) - 1;  // The 29 remaining bits are for the first data
    public:
-    Element(NodeType kind) : d(((uint32_t)kind) << TypeShift), typed{0, 0, 0} {}
+    Element(NodeType kind) : d(((uint32_t)kind) << TypeShift), typed{{0, 0, 0}} {}
     Element(NodeType kind, uint32_t stringIdx, uint32_t stringSize)
-        : d((((uint32_t)kind) << TypeShift) | (stringSize & CompoundMask)), typed{stringIdx, 0, 0}
+        : d((((uint32_t)kind) << TypeShift) | (stringSize & CompoundMask)), typed{{stringIdx, 0, 0}}
     {
         assert(kind == KEY || kind == VALUE || kind == COMMENT);
     }
-    Element(NodeType kind, uint32_t stringIdx, uint32_t stringSize, int eltIdx)
-        : d((((uint32_t)kind) << TypeShift) | (stringSize & CompoundMask)), typed{stringIdx, 0, 0}
+    Element(NodeType kind, uint32_t stringIdx, uint32_t stringSize, uint32_t eltIdx)
+        : d((((uint32_t)kind) << TypeShift) | (stringSize & CompoundMask)), typed{{stringIdx, 0, 0}}
     {
         assert(kind == KEY);
         typed.key.eltIdx = eltIdx;
     }
     Element(Element&& rhs) noexcept
     {
-        // codechecker_suppress [bugprone-undefined-memory-manipulation]
-        memcpy(this, (char*)&rhs, sizeof(Element));
+        memcpy((char*)this, (char*)&rhs, sizeof(Element));
         memset((char*)&rhs, 0, sizeof(Element));
     }
     Element(const Element& rhs) = delete;
@@ -636,7 +635,7 @@ class Context
 
     void addString(const char* text, uint32_t textSize, Element* elt)
     {
-        uint32_t stringIdx  = (int)arena.size();
+        uint32_t stringIdx  = (uint32_t)arena.size();
         uint32_t stringSize = textSize + 1;
         arena.resize(arena.size() + stringSize);
         memcpy(arena.data() + stringIdx, text, textSize * sizeof(char));
@@ -648,7 +647,7 @@ class Context
 
     void addToSession(const char* text, uint32_t textSize)
     {
-        uint32_t startChunkIdx = (int)arena.size();
+        uint32_t startChunkIdx = (uint32_t)arena.size();
         arena.resize(startChunkIdx + textSize);
         memcpy(arena.data() + startChunkIdx, text, textSize * sizeof(char));
     }
@@ -661,7 +660,7 @@ class Context
         stringSize   = (uint32_t)arena.size() - sessionStartIdx;
     }
 
-    const char* getString(int stringIdx) const { return (const char*)(arena.data() + stringIdx); }
+    const char* getString(uint32_t stringIdx) const { return (const char*)(arena.data() + stringIdx); }
 
     // Accelerated map access
     // ======================
@@ -677,7 +676,7 @@ class Context
         if (keyHash < FirstValid) keyHash += FirstValid;  // Infinitesimal pessimisation of a few first values of hash. Worth it.
 
         uint32_t mask      = (_maxEntryQty - 1) & (~(KeyDirAssocQty - 1));
-        int      idx       = keyHash & mask;
+        uint32_t idx       = keyHash & mask;
         uint32_t probeIncr = 1;
 
         while (true) {
@@ -706,7 +705,7 @@ class Context
         if (keyHash < FirstValid) keyHash += FirstValid;
 
         uint32_t mask      = (_maxEntryQty - 1) & (~(KeyDirAssocQty - 1));
-        int      idx       = keyHash & mask;
+        uint32_t idx       = keyHash & mask;
         uint32_t probeIncr = 1;
         uint32_t cellId    = 0;
 
@@ -739,7 +738,7 @@ class Context
         if (keyHash < FirstValid) keyHash += FirstValid;
 
         uint32_t mask      = (_maxEntryQty - 1) & (~(KeyDirAssocQty - 1));
-        int      idx       = keyHash & mask;
+        uint32_t idx       = keyHash & mask;
         uint32_t probeIncr = 1;
 
         while (true) {
@@ -749,7 +748,7 @@ class Context
                 detail::Element* childElt = &elements[parentElt->getSub(_entries[idx + cellId].childIndex)];
                 if (childElt->getType() == KEY && childElt->getStringSize() == keySize + 1 &&  // +1 due to zero termination included
                     strncmp(getString(childElt->getStringIdx()), key, keySize) == 0) {
-                    int oldChildIndex      = _entries[idx + cellId].childIndex;
+                    uint32_t oldChildIndex = _entries[idx + cellId].childIndex;
                     _entries[idx + cellId] = {Tombstone, UINT_MAX};
                     return oldChildIndex;
                 }
@@ -872,7 +871,7 @@ struct StringHelper {
     void addChunk(const char* text, uint32_t textSize)
     {
         assert(textSize < (1U << 31));
-        uint32_t startIdx = (int)arena.size();
+        uint32_t startIdx = (uint32_t)arena.size();
         arena.resize(startIdx + textSize);
         if (textSize > 0) { memcpy(arena.data() + startIdx, text, textSize * sizeof(char)); }
     }
@@ -882,7 +881,7 @@ struct StringHelper {
         // Adjust the size
         while (textSize > 0 && (text[textSize - 1] == ' ' || text[textSize - 1] == '\t')) { --textSize; }
 
-        uint32_t startIdx = (int)arena.size();
+        uint32_t startIdx = (uint32_t)arena.size();
         arena.resize(startIdx + textSize);
         if (textSize > 0) { memcpy(arena.data() + startIdx, text, textSize * sizeof(char)); }
     }
@@ -983,8 +982,9 @@ dumpAsPyStruct(Context* context, bool withIndent)
                     for (int i = 0; i < indent; ++i) sh.addChunk(indentStr, indentSize);
                 }
                 sh.addChar('[');
-                for (int i = v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
-                    stack.emplace_back(&context->elements[v->getSub(i)], indent + 1, false, !isOneLiner, i == (int)(v->getSubQty() - 1));
+                for (int i = (int)v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
+                    stack.emplace_back(&context->elements[v->getSub((uint32_t)i)], indent + 1, false, !isOneLiner,
+                                       i == (int)(v->getSubQty() - 1));
                 }
             }
         }
@@ -1005,8 +1005,9 @@ dumpAsPyStruct(Context* context, bool withIndent)
                     for (int i = 0; i < indent; ++i) sh.addChunk(indentStr, indentSize);
                 }
                 sh.addChar('{');
-                for (int i = v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
-                    stack.emplace_back(&context->elements[v->getSub(i)], indent + 1, false, !isOneLiner, i == (int)(v->getSubQty() - 1));
+                for (int i = (int)v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
+                    stack.emplace_back(&context->elements[v->getSub((uint32_t)i)], indent + 1, false, !isOneLiner,
+                                       i == (int)(v->getSubQty() - 1));
                 }
             }
         }
@@ -1073,7 +1074,6 @@ dumpAsPyStruct(Context* context, bool withIndent)
 
     if (!sh.arena.empty() && sh.arena.back() == ',') sh.arena.pop_back();
 
-    sh.addChar('\0');
     return std::string(sh.arena.data(), sh.arena.size());
 }
 
@@ -1133,8 +1133,8 @@ dumpAsYaml(Context* context)
                 sh.addChar(' ');
                 ++indent;
             }
-            for (int i = v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
-                stack.emplace_back(&context->elements[v->getSub(i)], indent, SEQUENCE);
+            for (int i = (int)v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
+                stack.emplace_back(&context->elements[v->getSub((uint32_t)i)], indent, SEQUENCE);
             }
             isFirst = false;
         }
@@ -1147,8 +1147,8 @@ dumpAsYaml(Context* context)
                 sh.addChar(' ');
                 ++indent;
             }
-            for (int i = v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
-                stack.emplace_back(&context->elements[v->getSub(i)], indent, MAP);
+            for (int i = (int)v->getSubQty() - 1; i >= 0; --i) {  // Reverse order
+                stack.emplace_back(&context->elements[v->getSub((uint32_t)i)], indent, MAP);
             }
             if (parentType == SEQUENCE) {
                 stack.back().indent -= 1;
@@ -1193,7 +1193,7 @@ dumpAsYaml(Context* context)
                 bool isSingleQuote = (newLineCount == 0);
                 if (!isPlain && newLineCount > 0) {
                     // Select between case 3 and case 4 by removing the count of trailing newlines
-                    int lastIdx = textSize - 1;
+                    uint32_t lastIdx = textSize - 1;
                     while (text[lastIdx] == '\n') {
                         --newLineCount;
                         --lastIdx;
@@ -1287,7 +1287,7 @@ dumpAsYaml(Context* context)
         if (v->getType() != KEY) { lastIsKey = false; }
 
         // Comment piggybacking
-        int nextCommentEltIdx = v->getNextCommentIndex();
+        uint32_t nextCommentEltIdx = v->getNextCommentIndex();
         while (nextCommentEltIdx) {
             const Element& elt = context->elements[nextCommentEltIdx];
 
@@ -1306,7 +1306,6 @@ dumpAsYaml(Context* context)
 
     }  // End of loop on stack
 
-    sh.addChar('\0');
     return std::string(sh.arena.data(), sh.arena.size());
 }
 
@@ -1323,8 +1322,8 @@ class Node
     // ======================================
 
     explicit Node() {}
-    explicit Node(int eltIdx, detail::Context* context) : _eltIdx(eltIdx), _context(context) {}
-    explicit Node(int eltIdx, detail::Context* context, std::string nonExistingKey)
+    explicit Node(uint32_t eltIdx, detail::Context* context) : _eltIdx(eltIdx), _context(context) {}
+    explicit Node(uint32_t eltIdx, detail::Context* context, std::string nonExistingKey)
         : _eltIdx(eltIdx), _context(context), _nonExistingKey(std::move(nonExistingKey))
     {
     }
@@ -1972,8 +1971,8 @@ struct TokenParser {
 inline TokenParser
 getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, StringHelper& sh, int& colNbr, int& lineNbr, uint32_t& idx)
 {
-    bool isNewLine = (colNbr == 0);
-    int  initIdx   = idx;
+    bool     isNewLine = (colNbr == 0);
+    uint32_t initIdx   = idx;
 
     // Go to first non space
     uint32_t idxFnp = idx;
@@ -2086,7 +2085,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
             throwParsing(lineNbr, text + initIdx, "Parse error: using tabulation is not accepted for indentation");
         }
         // Compute the expected indent (folded or literal strings case only)
-        int effectiveIndent = (uint32_t)(nonSpaceIdx - idx);
+        uint32_t effectiveIndent = (uint32_t)(nonSpaceIdx - idx);
         if (targetIndent < 0) {
             // Initial empty line case
             if (text[nonSpaceIdx] == '\n' || text[nonSpaceIdx] == '\r') {  // @BUG Need to handle comments too
@@ -2207,7 +2206,9 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                 lineEndIdx           = rollbackLineEndIdx;
             } else {
                 if (!sh.empty()) { sh.addChar('\n'); }
-                if (lineEndIdx >= idx + targetIndent) { sh.addChunk(text + idx + targetIndent, lineEndIdx - (idx + targetIndent)); }
+                if (lineEndIdx >= idx + (uint32_t)targetIndent) {
+                    sh.addChunk(text + idx + targetIndent, lineEndIdx - (idx + (uint32_t)targetIndent));
+                }
             }
         }
 
@@ -2220,15 +2221,18 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                 lineEndIdx           = rollbackLineEndIdx;
             } else {
                 // Indentation behavior
-                bool isIndented = (lineEndIdx <= idx + targetIndent || (!sh.empty() && text[idx + targetIndent] == ' '));
+                bool isIndented =
+                    (lineEndIdx <= idx + (uint32_t)targetIndent || (!sh.empty() && text[idx + (uint32_t)targetIndent] == ' '));
                 if (isIndented || indentedFoldedLine) {
                     sh.addChar('\n');
-                } else if (lineEndIdx > idx + targetIndent && !sh.empty() && sh.arena.back() != '\n') {
+                } else if (lineEndIdx > idx + (uint32_t)targetIndent && !sh.empty() && sh.arena.back() != '\n') {
                     sh.addChar(' ');
                 }
 
-                indentedFoldedLine = (lineEndIdx > idx + targetIndent && text[idx + targetIndent] == ' ');
-                if (lineEndIdx > idx + targetIndent) { sh.addChunk(text + idx + targetIndent, lineEndIdx - (idx + targetIndent)); }
+                indentedFoldedLine = (lineEndIdx > idx + (uint32_t)targetIndent && text[idx + (uint32_t)targetIndent] == ' ');
+                if (lineEndIdx > idx + (uint32_t)targetIndent) {
+                    sh.addChunk(text + idx + targetIndent, lineEndIdx - (idx + (uint32_t)targetIndent));
+                }
             }
         }
 
@@ -2338,7 +2342,7 @@ parse(const char* text, uint32_t textSize)
     int                    mlStringParentIndent = -1;
     int                    indexColNbr          = 0;
     int                    tokenLineNbr         = 1;
-    int                    tokenIdx             = 0;
+    uint32_t               tokenIdx             = 0;
 
     while (!isEndOfInput && !stack.empty()) {
 #ifdef DEBUG_PARSING
@@ -2359,18 +2363,18 @@ parse(const char* text, uint32_t textSize)
 
         switch (token.type) {
             case TokenType::Comment: {
-                int eltIdx = (int)elements.size();
+                uint32_t eltIdx = (uint32_t)elements.size();
                 elements.emplace_back(COMMENT, token.stringIdx, token.stringSize);
                 if (isStartingWithNewLine) { elements.back().setStandalone(); }
 
-                int parentCommentEltIdx = parent.eltIdx;
+                uint32_t parentCommentEltIdx = parent.eltIdx;
                 if (elements[parentCommentEltIdx].getType() == UNKNOWN && stack.size() >= 2) {
                     parentCommentEltIdx =
                         stack[stack.size() - 2].eltIdx;  // If the last is unknown, then the for-last must be a key or sequence
                 }
 
                 if (elements[parentCommentEltIdx].getType() != UNKNOWN) {
-                    int tmpIdx = 0;
+                    uint32_t tmpIdx = 0;
                     while ((tmpIdx = elements[parentCommentEltIdx].getNextCommentIndex()) != 0) { parentCommentEltIdx = tmpIdx; }
                     elements[parentCommentEltIdx].setComment(eltIdx);
                 }
@@ -2421,7 +2425,7 @@ parse(const char* text, uint32_t textSize)
                                          "Parse error: probably bad indentation with caret, as the parent ('%s') already has a value",
                                          to_string(KEY));  // Reachable state?
                         }
-                        int eltIdx = (int)elements.size();
+                        uint32_t eltIdx = (uint32_t)elements.size();
                         elements.emplace_back(SEQUENCE);
                         stack.emplace_back(eltIdx, colNbr, colNbr);
                         elements[parent.eltIdx].add(eltIdx);
@@ -2431,7 +2435,7 @@ parse(const char* text, uint32_t textSize)
 
                 // Create the next node, untyped. This is required to handle the case of empty values in sequences.
                 assert(elements[parent.eltIdx].getType() == SEQUENCE);
-                int eltIdx = (int)elements.size();
+                uint32_t eltIdx = (uint32_t)elements.size();
                 elements.emplace_back(UNKNOWN);
                 stack.emplace_back(eltIdx, colNbr, -1);
                 elements[parent.eltIdx].add(eltIdx);
@@ -2479,7 +2483,7 @@ parse(const char* text, uint32_t textSize)
                                          to_string(parentElt.getType()));
                         }
 
-                        int eltIdx = (int)elements.size();
+                        uint32_t eltIdx = (uint32_t)elements.size();
                         elements.emplace_back(MAP);
                         stack.emplace_back(eltIdx, parent.indent, -1);
                         elements[parent.eltIdx].add(eltIdx);
@@ -2489,7 +2493,7 @@ parse(const char* text, uint32_t textSize)
 
                 // Add key
                 if (parent.childIndent < 0) { stack.back().childIndent = colNbr; }
-                int eltIdx = (int)elements.size();
+                uint32_t eltIdx = (uint32_t)elements.size();
                 elements.emplace_back(KEY, token.stringIdx, token.stringSize);
                 stack.emplace_back(eltIdx, colNbr, -1);
                 assert(elements[parent.eltIdx].getType() != KEY || elements[parent.eltIdx].getSubQty() == 0);
@@ -2504,7 +2508,7 @@ parse(const char* text, uint32_t textSize)
 
                 // Create the next node, untyped. This is required to handle the case of empty values in sequences.
                 assert(elements[parent.eltIdx].getType() == KEY);
-                eltIdx = (int)elements.size();
+                eltIdx = (uint32_t)elements.size();
                 elements.emplace_back(UNKNOWN);
                 stack.emplace_back(eltIdx, colNbr, -1);
                 elements[parent.eltIdx].add(eltIdx);

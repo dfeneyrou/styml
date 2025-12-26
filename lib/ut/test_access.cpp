@@ -67,12 +67,12 @@ TEST_SUITE("Parsing")
 
     TEST_CASE("1-Sanity   : Access map item removal and insert")
     {
-        constexpr int MaxMapSize = 16;
-        char          tmpStr[32];
+        constexpr uint32_t MaxMapSize = 16;
+        char               tmpStr[32];
 
         // Build the key array
         std::vector<std::string> keys(MaxMapSize);
-        for (int i = 0; i < MaxMapSize; ++i) {
+        for (uint32_t i = 0; i < MaxMapSize; ++i) {
             snprintf(tmpStr, sizeof(tmpStr), "%08d", i);
             keys[i] = tmpStr;
         }
@@ -80,14 +80,14 @@ TEST_SUITE("Parsing")
         // Build the document from scratch
         Document root;
         root = NodeType::MAP;
-        for (int i = 0; i < MaxMapSize; ++i) { root[keys[i]] = keys[i]; }
+        for (uint32_t i = 0; i < MaxMapSize; ++i) { root[keys[i]] = keys[i]; }
         // Check correctness
-        for (int i = 0; i < MaxMapSize; ++i) { CHECK(root[keys[i]].as<std::string>() == keys[i]); }
+        for (uint32_t i = 0; i < MaxMapSize; ++i) { CHECK(root[keys[i]].as<std::string>() == keys[i]); }
 
         // Remove 1 each 3
-        for (int i = 0; i < MaxMapSize; i += 3) { root.remove(keys[i]); }
+        for (uint32_t i = 0; i < MaxMapSize; i += 3) { root.remove(keys[i]); }
         // Check correctness
-        for (int i = 0; i < MaxMapSize; ++i) {
+        for (uint32_t i = 0; i < MaxMapSize; ++i) {
             if ((i % 3) == 0) {
                 CHECK(!root.hasKey(keys[i]));
             } else {
@@ -98,9 +98,9 @@ TEST_SUITE("Parsing")
         }
 
         // Re-insert removed elements
-        for (int i = 0; i < MaxMapSize; i += 3) { root.insert(keys[i], keys[i]); }
+        for (uint32_t i = 0; i < MaxMapSize; i += 3) { root.insert(keys[i], keys[i]); }
         // Check correctness
-        for (int i = 0; i < MaxMapSize; ++i) { CHECK(root[keys[i]].as<std::string>() == keys[i]); }
+        for (uint32_t i = 0; i < MaxMapSize; ++i) { CHECK(root[keys[i]].as<std::string>() == keys[i]); }
     }
 
     TEST_CASE("1-Sanity   : Access map after parsing")
@@ -190,7 +190,7 @@ TEST_SUITE("Parsing")
 
         // Build the key array (so the build is not taken into account in the measurement)
         std::vector<std::string> keys(MaxMapSize);
-        for (int i = 0; i < MaxMapSize; ++i) {
+        for (uint32_t i = 0; i < MaxMapSize; ++i) {
             snprintf(tmpStr, sizeof(tmpStr), "%08d", i);
             keys[i] = tmpStr;
         }
@@ -199,16 +199,16 @@ TEST_SUITE("Parsing")
         uint64_t buildStartTimeUs = getTime();
         Document root;
         root = NodeType::MAP;
-        for (int i = 0; i < MaxMapSize; ++i) { root[keys[i]] = keys[i]; }
+        for (uint32_t i = 0; i < MaxMapSize; ++i) { root[keys[i]] = keys[i]; }
         uint64_t buildEndTimeUs = getTime();
 
         // Check correctness (no time measurement)
-        for (int i = 0; i < MaxMapSize; ++i) { CHECK(root[keys[i]].as<std::string>() == keys[i]); }
+        for (uint32_t i = 0; i < MaxMapSize; ++i) { CHECK(root[keys[i]].as<std::string>() == keys[i]); }
 
         // Access the document
-        uint64_t accessStartTimeUs = getTime();
-        int64_t  dummyCount        = 0;
-        for (int i = 0; i < MaxMapSize; ++i) { dummyCount += strlen(root[keys[i]].as<const char*>()); }
+        uint64_t                 accessStartTimeUs = getTime();
+        [[maybe_unused]] int64_t dummyCount        = 0;
+        for (uint32_t i = 0; i < MaxMapSize; ++i) { dummyCount += strlen(root[keys[i]].as<const char*>()); }
         uint64_t accessEndTimeUs = getTime();
 
         // Results
@@ -223,12 +223,12 @@ TEST_SUITE("Parsing")
 
     TEST_CASE("2-Benchmark: Sequence access")
     {
-        constexpr int MaxSequenceSize = 1000000;
-        char          tmpStr[32];
+        constexpr uint32_t MaxSequenceSize = 1000000;
+        char               tmpStr[32];
 
         // Build the key array (so the build is not taken into account in the measurement)
         std::vector<std::string> keys(MaxSequenceSize);
-        for (int i = 0; i < MaxSequenceSize; ++i) {
+        for (uint32_t i = 0; i < MaxSequenceSize; ++i) {
             snprintf(tmpStr, sizeof(tmpStr), "%08d", i);
             keys[i] = tmpStr;
         }
@@ -237,13 +237,13 @@ TEST_SUITE("Parsing")
         uint64_t buildStartTimeUs = getTime();
         Document root;
         root = NodeType::SEQUENCE;
-        for (int i = 0; i < MaxSequenceSize; ++i) { root.push_back(keys[i]); }
+        for (uint32_t i = 0; i < MaxSequenceSize; ++i) { root.push_back(keys[i]); }
         uint64_t buildEndTimeUs = getTime();
 
         // Access the document
-        uint64_t accessStartTimeUs = getTime();
-        int64_t  dummyCount        = 0;
-        for (int i = 0; i < MaxSequenceSize; ++i) { dummyCount += strlen(root[i].as<const char*>()); }
+        uint64_t                 accessStartTimeUs = getTime();
+        [[maybe_unused]] int64_t dummyCount        = 0;
+        for (uint32_t i = 0; i < MaxSequenceSize; ++i) { dummyCount += strlen(root[i].as<const char*>()); }
         uint64_t accessEndTimeUs = getTime();
 
         // Results

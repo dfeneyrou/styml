@@ -30,6 +30,7 @@ import subprocess
 
 
 def shell(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE):
+    print("Command: %s" % command)
     return subprocess.run(command, stdout=stdout, stderr=stderr, shell=True, universal_newlines=True, check=check)
 
 

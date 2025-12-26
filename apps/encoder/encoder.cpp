@@ -53,7 +53,7 @@ getMemoryUsage()
         ret = fscanf(fh, "%llu ", &val);
         if (i == 24) {
             fclose(fh);
-            return val * sysconf(_SC_PAGE_SIZE);
+            return val * (unsigned long long)sysconf(_SC_PAGE_SIZE);
         }
     }
     fclose(fh);

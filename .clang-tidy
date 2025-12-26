@@ -19,7 +19,6 @@ readability-redundant-string-cstr,
 -cppcoreguidelines-pro-type-member-init,
 -hicpp-use-auto,
 -readability-implicit-bool-conversion,
--hicpp-explicit-conversions,
 -performance-enum-size,
 '
 WarningsAsErrors: '*'
