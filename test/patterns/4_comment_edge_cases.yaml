@@ -1,0 +1,8 @@
+# Start comment
+key: value # Inline comment
+# Middle comment
+list:
+  - item 1
+  - # Empty item with comment
+    item 2
+# End comment

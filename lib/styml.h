@@ -120,39 +120,51 @@ inline void STYML_PRINTF_CHECK(1, 2) throwMessage(STYML_PRINTF_FORMAT_STRING con
     va_start(args, format);
     vsnprintf(tmpStr, BufferSize, format, args);
     va_end(args);
+    tmpStr[BufferSize - 1] = '\0';
     throw E(std::string(tmpStr));
 }
 
-inline void STYML_PRINTF_CHECK(3, 4) throwParsing(int lineNbr, const char* lineStartPtr, STYML_PRINTF_FORMAT_STRING const char* format, ...)
+inline void STYML_PRINTF_CHECK(4, 5)
+    throwParsing(int lineNbr, const char* lineStartPtr, const char* endBufPtr, STYML_PRINTF_FORMAT_STRING const char* format, ...)
 {
     assert(lineStartPtr);
-    constexpr const char* FooterMessage = "\n  In line %d: \"";
-    constexpr int         BufferSize    = 512;
-    constexpr int         LineCopySize  = 128;
-    constexpr int         ReservedSize  = 32;  // Include the footer + "..." + zero termination + margin
+    constexpr int BufferSize = 1024;
     char                  tmpStr[BufferSize];
 
     // Write the main message
     va_list args;
     va_start(args, format);
-    int alreadyWritten = vsnprintf(tmpStr, BufferSize - LineCopySize - ReservedSize, format, args);
+    int alreadyWritten = vsnprintf(tmpStr, BufferSize, format, args);
     va_end(args);
 
+    if (alreadyWritten < 0) alreadyWritten = 0;
+    if (alreadyWritten >= BufferSize) alreadyWritten = BufferSize - 1;
+
     // Add footer
-    alreadyWritten += snprintf(tmpStr + alreadyWritten, ReservedSize, FooterMessage, lineNbr);
+    int written = snprintf(tmpStr + alreadyWritten, (size_t)(BufferSize - alreadyWritten), "\n  In line %d: \"", lineNbr);
+    if (written > 0) alreadyWritten += std::min(written, (int)(BufferSize - alreadyWritten - 1));
 
     // Add the line copy
+    constexpr int LineCopySize = 128;
     const char* endLinePtr = lineStartPtr;
-    while (*endLinePtr != '\0' && *endLinePtr != '\r' && *endLinePtr != '\n' && endLinePtr - lineStartPtr < LineCopySize) ++endLinePtr;
+    while (endLinePtr < endBufPtr && *endLinePtr != '\0' && *endLinePtr != '\r' && *endLinePtr != '\n' &&
+           (endLinePtr - lineStartPtr) < LineCopySize)
+        ++endLinePtr;
     int lengthToWrite = (int)(endLinePtr - lineStartPtr);
 
-    // Add the line copy
-    if (lengthToWrite > 0) {
-        alreadyWritten += std::min(snprintf(tmpStr + alreadyWritten, (size_t)lengthToWrite + 1, "%s", lineStartPtr),
-                                   lengthToWrite);  // +1 for zero termination
-        if (lengthToWrite == LineCopySize) { alreadyWritten += snprintf(tmpStr + alreadyWritten, 4, "..."); }
-        snprintf(tmpStr + alreadyWritten, 2, "\"");
+    if (lengthToWrite > 0 && alreadyWritten < BufferSize - 1) {
+        int toCopy = std::min(lengthToWrite, (int)(BufferSize - alreadyWritten - 5));  // 5 for ... and " and \0
+        if (toCopy > 0) {
+            memcpy(tmpStr + alreadyWritten, lineStartPtr, (size_t)toCopy);
+            alreadyWritten += toCopy;
+            if (lengthToWrite > toCopy) {
+                memcpy(tmpStr + alreadyWritten, "...", 3);
+                alreadyWritten += 3;
     }
+            tmpStr[alreadyWritten++] = '\"';
+        }
+    }
+    tmpStr[std::min(alreadyWritten, BufferSize - 1)] = '\0';
 
     throw ParseException(std::string(tmpStr));
 }
@@ -294,12 +306,12 @@ class Element
    public:
     Element(NodeType kind) : d(((uint32_t)kind) << TypeShift), typed{{0, 0, 0}} {}
     Element(NodeType kind, uint32_t stringIdx, uint32_t stringSize)
-        : d((((uint32_t)kind) << TypeShift) | (stringSize & CompoundMask)), typed{{stringIdx, 0, 0}}
+        : d((((uint32_t)kind) << TypeShift) | (std::min(stringSize, CompoundMask))), typed{{stringIdx, 0, 0}}
     {
         assert(kind == KEY || kind == VALUE || kind == COMMENT);
     }
     Element(NodeType kind, uint32_t stringIdx, uint32_t stringSize, uint32_t eltIdx)
-        : d((((uint32_t)kind) << TypeShift) | (stringSize & CompoundMask)), typed{{stringIdx, 0, 0}}
+        : d((((uint32_t)kind) << TypeShift) | (std::min(stringSize, CompoundMask))), typed{{stringIdx, 0, 0}}
     {
         assert(kind == KEY);
         typed.key.eltIdx = eltIdx;
@@ -374,7 +386,7 @@ class Element
     void setString(uint32_t stringIdx, uint32_t stringSize)
     {
         assert(getType() == KEY || getType() == VALUE);
-        setCompound(stringSize);
+        setCompound(std::min(stringSize, CompoundMask));
         typed.key.stringIdx = stringIdx;
     }
 
@@ -626,8 +638,13 @@ class Context
 
     void addString(const char* text, uint32_t textSize, uint32_t& stringIdx, uint32_t& stringSize)
     {
+        constexpr uint32_t MaxStringSize = (1U << 29) - 1;
+        if (textSize >= MaxStringSize) {
+            throwMessage<Exception>("String too large for STYML (max %u bytes)", MaxStringSize - 1);
+        }
         stringIdx  = (uint32_t)arena.size();
         stringSize = textSize + 1;  // +1 for zero termination of the string
+        if (arena.size() + stringSize > UINT_MAX) { throwMessage<Exception>("Total document size too large (> 4GB)"); }
         arena.resize(arena.size() + stringSize);
         memcpy(arena.data() + stringIdx, text, textSize * sizeof(char));
         arena.back() = 0;  // So that using as 'const char*' works properly
@@ -635,11 +652,8 @@ class Context
 
     void addString(const char* text, uint32_t textSize, Element* elt)
     {
-        uint32_t stringIdx  = (uint32_t)arena.size();
-        uint32_t stringSize = textSize + 1;
-        arena.resize(arena.size() + stringSize);
-        memcpy(arena.data() + stringIdx, text, textSize * sizeof(char));
-        arena.back() = 0;
+        uint32_t stringIdx = 0, stringSize = 0;
+        addString(text, textSize, stringIdx, stringSize);
         elt->setString(stringIdx, stringSize);
     }
 
@@ -1978,7 +1992,9 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
     uint32_t idxFnp = idx;
     if (isNewLine) {
         while (idxFnp < endIdx && text[idxFnp] == ' ') ++idxFnp;
-        if (text[idxFnp] == '\t') { throwParsing(lineNbr, text + idx, "Parse error: using tabulation is not accepted for indentation"); }
+        if (idxFnp < endIdx && text[idxFnp] == '\t') {
+            throwParsing(lineNbr, text + idx, text + endIdx, "Parse error: using tabulation is not accepted for indentation");
+        }
     } else {
         while (idxFnp < endIdx && (text[idxFnp] == ' ' || text[idxFnp] == '\t')) ++idxFnp;
     }
@@ -2045,13 +2061,15 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
         for (int i = 0; i < 2; ++i) {  // Two passes as we shall extract 2 infos (chomp & indent) in any order
             if (idx >= endIdx) { break; }
             if (text[idx] == '+' || text[idx] == '-') {
-                if (chomp != ' ') throwParsing(lineNbr, text + initIdx, "Parse error: chomp cannot be provided more than once");
+                if (chomp != ' ')
+                    throwParsing(lineNbr, text + initIdx, text + endIdx, "Parse error: chomp cannot be provided more than once");
                 chomp = text[idx];
                 ++idx;
                 ++colNbr;
             } else if (text[idx] >= '1' && text[idx] <= '9') {
                 if (deltaIndent >= 0)
-                    throwParsing(lineNbr, text + initIdx, "Parse error: explicit indentation cannot be provided more than once");
+                    throwParsing(lineNbr, text + initIdx, text + endIdx,
+                                 "Parse error: explicit indentation cannot be provided more than once");
                 deltaIndent = text[idx] - '0';
                 ++idx;
                 ++colNbr;
@@ -2082,7 +2100,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
         while (nonSpaceIdx < endIdx && text[nonSpaceIdx] == ' ') ++nonSpaceIdx;
         colNbr += nonSpaceIdx - idx;
         if (isNewLine && nonSpaceIdx < endIdx && text[nonSpaceIdx] == '\t') {
-            throwParsing(lineNbr, text + initIdx, "Parse error: using tabulation is not accepted for indentation");
+            throwParsing(lineNbr, text + initIdx, text + endIdx, "Parse error: using tabulation is not accepted for indentation");
         }
         // Compute the expected indent (folded or literal strings case only)
         uint32_t effectiveIndent = (uint32_t)(nonSpaceIdx - idx);
@@ -2121,7 +2139,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                 // Escaped (=double) single quote ?
                 if (lineEndIdx + 1 < endIdx && text[lineEndIdx + 1] == '\'') {
                     if (isFirstAdd) {
-                        if (sh.arena.back() != '\n') { sh.addChar(' '); }
+                        if (!sh.arena.empty() && sh.arena.back() != '\n') { sh.addChar(' '); }
                         isFirstAdd = false;
                     }
                     sh.addChunk(text + chunkStartIdx, lineEndIdx + 1 - chunkStartIdx);  // Keep one single quote
@@ -2132,12 +2150,14 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                 isEndOfStringReached = true;
                 break;
             }
-            if (isFirstAdd && sh.arena.back() != '\n') { sh.addChar(' '); }
+            if (isFirstAdd && !sh.arena.empty() && sh.arena.back() != '\n') { sh.addChar(' '); }
             if (lineEndIdx > chunkStartIdx) { sh.addChunk(text + chunkStartIdx, lineEndIdx - chunkStartIdx); }
-            if (lineEndIdx >= endIdx) { throwParsing(lineNbr, text + initIdx, "Parse error: unfinished single-quote string"); }
-            if (text[lineEndIdx] == '\'') {
+            if (lineEndIdx >= endIdx) {
+                throwParsing(lineNbr, text + initIdx, text + endIdx, "Parse error: unfinished single-quote string");
+            }
+            if (lineEndIdx < endIdx && text[lineEndIdx] == '\'') {
                 isEndOfStringReached = true;
-                ++lineEndIdx;  // Skip double quote
+                ++lineEndIdx;  // Skip single quote
                 while (text[lineEndIdx] == ' ' || text[lineEndIdx] == '\t') { ++lineEndIdx; }
             }
             if (!isEndOfStringReached && nonSpaceIdx == lineEndIdx) { sh.addLine("\n", 1); }
@@ -2154,7 +2174,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                     continue;
                 }
                 // Skip this backslash
-                if (isFirstAdd && sh.arena.back() != '\n') {
+                if (isFirstAdd && !sh.arena.empty() && sh.arena.back() != '\n') {
                     sh.addChar(' ');
                     isFirstAdd = false;
                 }
@@ -2186,10 +2206,10 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                     chunkStartIdx = ++lineEndIdx;
                 }
             }
-            if (isFirstAdd && sh.arena.back() != '\n') { sh.addChar(' '); }
+            if (isFirstAdd && !sh.arena.empty() && sh.arena.back() != '\n') { sh.addChar(' '); }
             if (lineEndIdx > chunkStartIdx) { sh.addChunk(text + chunkStartIdx, lineEndIdx - chunkStartIdx); }
-            if (lineEndIdx >= endIdx) throwParsing(lineNbr, text + initIdx, "Parse error: unfinished double-quote string");
-            if (text[lineEndIdx] == '\"') {
+            if (lineEndIdx >= endIdx) throwParsing(lineNbr, text + initIdx, text + endIdx, "Parse error: unfinished double-quote string");
+            if (lineEndIdx < endIdx && text[lineEndIdx] == '\"') {
                 isEndOfStringReached = true;
                 ++lineEndIdx;  // Skip double quote
                 while (text[lineEndIdx] == ' ' || text[lineEndIdx] == '\t') { ++lineEndIdx; }
@@ -2225,7 +2245,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                     (lineEndIdx <= idx + (uint32_t)targetIndent || (!sh.empty() && text[idx + (uint32_t)targetIndent] == ' '));
                 if (isIndented || indentedFoldedLine) {
                     sh.addChar('\n');
-                } else if (lineEndIdx > idx + (uint32_t)targetIndent && !sh.empty() && sh.arena.back() != '\n') {
+                } else if (lineEndIdx > idx + (uint32_t)targetIndent && !sh.empty() && !sh.arena.empty() && sh.arena.back() != '\n') {
                     sh.addChar(' ');
                 }
 
@@ -2250,7 +2270,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                 isEndOfStringReached = true;
                 lineEndIdx           = rollbackLineEndIdx;
             } else {
-                if (!sh.empty() && sh.arena.back() != '\n') { sh.addChar(' '); }
+                if (!sh.empty() && !sh.arena.empty() && sh.arena.back() != '\n') { sh.addChar(' '); }
                 sh.addChunkNoTrail(text + idx + effectiveIndent, lineEndIdx - (idx + effectiveIndent));
             }
             if (!isEndOfStringReached && nonSpaceIdx == lineEndIdx) { sh.addLine("\n", 1); }
@@ -2279,8 +2299,8 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
         ++lineNbr;
 
         if (idx >= endIdx && !isEndOfStringReached) {
-            if (mlType == '"') { throwParsing(lineNbr, text + initIdx, "Parse error: unfinished double-quote string"); }
-            if (mlType == '\'') { throwParsing(lineNbr, text + initIdx, "Parse error: unfinished single-quote string"); }
+            if (mlType == '"') { throwParsing(lineNbr, text + initIdx, text + endIdx, "Parse error: unfinished double-quote string"); }
+            if (mlType == '\'') { throwParsing(lineNbr, text + initIdx, text + endIdx, "Parse error: unfinished single-quote string"); }
         }
     }  // End of text line parsing
 
@@ -2399,12 +2419,12 @@ parse(const char* text, uint32_t textSize)
 
                 // Checks
                 if (stack.empty()) {
-                    throwParsing(tokenLineNbr, text + tokenIdx,
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                  "Parse error: the indentation of the caret (=%d) does not match any parent (=%d)", colNbr,
                                  parent.childIndent);  // Reachable state?
                 }
                 if (parent.childIndent >= 0 && colNbr != parent.childIndent) {
-                    throwParsing(tokenLineNbr, text + tokenIdx,
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                  "Parse error: the indentation of the caret (=%d) is not aligned with other child elements (=%d)", colNbr,
                                  parent.childIndent);
                 }
@@ -2421,7 +2441,7 @@ parse(const char* text, uint32_t textSize)
                     } else {
                         assert(parentElt.getType() != VALUE);
                         if (parentElt.getType() == KEY && parentElt.getSubQty() > 0) {
-                            throwParsing(tokenLineNbr, text + tokenIdx,
+                            throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                          "Parse error: probably bad indentation with caret, as the parent ('%s') already has a value",
                                          to_string(KEY));  // Reachable state?
                         }
@@ -2455,12 +2475,12 @@ parse(const char* text, uint32_t textSize)
 
                 // Checks
                 if (stack.empty()) {
-                    throwParsing(tokenLineNbr, text + tokenIdx,
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                  "Parse error: the indentation of the key (=%d) does not match any parent (=%d)", colNbr,
                                  parent.childIndent);  // Reachable state?
                 }
                 if (parent.childIndent >= 0 && colNbr < parent.childIndent) {
-                    throwParsing(tokenLineNbr, text + tokenIdx,
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                  "Parse error: the indentation of the key (=%d) is not aligned with other child elements (=%d)", colNbr,
                                  parent.childIndent);
                 }
@@ -2478,7 +2498,7 @@ parse(const char* text, uint32_t textSize)
                     } else {
                         assert(parentElt.getType() != VALUE);
                         if (parentElt.getType() == KEY && parentElt.getSubQty() > 0) {
-                            throwParsing(tokenLineNbr, text + tokenIdx,
+                            throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                          "Parse error: probably bad indentation, as the parent ('%s') already has a value",
                                          to_string(parentElt.getType()));
                         }
@@ -2500,7 +2520,7 @@ parse(const char* text, uint32_t textSize)
                 elements[parent.eltIdx].add(eltIdx);
                 if (!context->addMapChildIndex(parent.eltIdx, context->getString(token.stringIdx), token.stringSize - 1,
                                                &elements[parent.eltIdx], elements[parent.eltIdx].getSubQty() - 1)) {
-                    throwParsing(tokenLineNbr, text + tokenIdx,
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                  "Parse error: duplicated key are forbidden and the key '%s' is already present.",
                                  context->getString(token.stringIdx));
                 }
@@ -2520,17 +2540,17 @@ parse(const char* text, uint32_t textSize)
 
                 // Checks
                 if (colNbr <= parent.indent) {
-                    throwParsing(tokenLineNbr, text + tokenIdx,
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                  "Parse error: the indentation of the value (=%d) is not compatible with the parent indentation (=%d)",
                                  colNbr, parent.indent);
                 }
                 if (parent.childIndent >= 0 && colNbr < parent.childIndent) {
-                    throwParsing(tokenLineNbr, text + tokenIdx,
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
                                  "Parse error: the indentation of the value (=%d) is not aligned with other child elements (=%d)", colNbr,
                                  parent.childIndent);
                 }
                 if (elements[parent.eltIdx].getType() == MAP) {
-                    throwParsing(tokenLineNbr, text + tokenIdx, "Parse error: in a map, a value without a key is forbidden");
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize, "Parse error: in a map, a value without a key is forbidden");
                 }
                 if (parent.childIndent < 0) {
                     stack.back().childIndent = colNbr;
