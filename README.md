@@ -130,39 +130,40 @@ It can have 4 different types:
 
 The `Node` API is restricted depending on its type, as shown in the table below ("X" means accessible):
 
-| Method                                      | Value | Sequence | Map | Key           | Comment |
+| Method                                      | Value | Sequence | Map |      Key      | Comment |
 |:--------------------------------------------|:-----:|:--------:|:---:|:-------------:|:-------:|
-| `NodeType type()`                           | X     | X        | X   | X             | X       |
-| `bool isValue()`                            | X     | X        | X   | X             | X       |
-| `bool isKey()`                              | X     | X        | X   | X             | X       |
-| `bool isSequence()`                         | X     | X        | X   | X             | X       |
-| `bool isMap()`                              | X     | X        | X   | X             | X       |
-| `bool isComment()`                          | X     | X        | X   | X             | X       |
-| | | | | | |
-| `Node& operator=(const T&)`                 | X     | X        | X   | X (via value) |         |
-| `Node& operator=(newKind)`                  | X     | X        | X   | X (via value) |         |
-| `std::string keyName()`                     |       |          |     | X             |         |
-| `Node value()`                              |       |          |     | X             |         |
-| `as<T>()`                                   | X     |          |     | X (via value) |         |
-| `as<T>(const T& deflt)`                     | X     |          |     | X (via value) |         |
-| | | | | | |
-| `iterator begin()`                          |       | X        | X   |               |         |
-| `iterator end()`                            |       | X        | X   |               |         |
-| `size_t size()`                             |       | X        | X   |               |         |
-| | | | | | |
-| `Node operator[](uint32_t)`                 |       | X        |     |               |         |
-| `void push_back(const T&)`                  |       | X        |     |               |         |
-| `void push_back(NodeType)`                  |       | X        |     |               |         |
-| `void insert(uint32_t, const T&)`           |       | X        |     |               |         |
-| `void insert(uint32_t, NodeType)`           |       | X        |     |               |         |
-| `void remove(uint32_t)`                     |       | X        |     |               |         |
-| `void pop_back()`                           |       | X        |     |               |         |
-| | | | | | |
-| `bool hasKey(const std::string&)`           |       |          | X   |               |         |
-| `Node operator[](const std::string&)`       |       |          | X   |               |         |
-| `void insert(const std::string&, const T&)` |       |          | X   |               |         |
-| `void insert(const std::string&, NodeType)` |       |          | X   |               |         |
-| `bool remove(const std::string&)`           |       |          | X   |               |         |
+| `NodeType type()`                           |   X   |    X     |  X  |       X       |    X    |
+| `bool isValue()`                            |   X   |    X     |  X  |       X       |    X    |
+| `bool isKey()`                              |   X   |    X     |  X  |       X       |    X    |
+| `bool isSequence()`                         |   X   |    X     |  X  |       X       |    X    |
+| `bool isMap()`                              |   X   |    X     |  X  |       X       |    X    |
+| `bool isComment()`                          |   X   |    X     |  X  |       X       |    X    |
+|                                             |       |          |     |               |         |
+| `Node& operator=(const T&)`                 |   X   |    X     |  X  | X (via value) |         |
+| `Node& operator=(newKind)`                  |   X   |    X     |  X  | X (via value) |         |
+| `std::string keyName()`                     |       |          |     |       X       |         |
+| `Node value()`                              |       |          |     |       X       |         |
+| `as<T>()`                                   |   X   |          |     | X (via value) |         |
+| `as<T>(const T& deflt)`                     |   X   |          |     | X (via value) |         |
+|                                             |       |          |     |               |         |
+| `iterator begin()`                          |       |    X     |  X  |               |         |
+| `iterator end()`                            |       |    X     |  X  |               |         |
+| `size_t size()`                             |       |    X     |  X  |               |         |
+|                                             |       |          |     |               |         |
+| `Node operator[](uint32_t)`                 |       |    X     |     |               |         |
+| `Node back()`                               |       |    X     |     |               |         |
+| `void push_back(const T&)`                  |       |    X     |     |               |         |
+| `void push_back(NodeType)`                  |       |    X     |     |               |         |
+| `void insert(uint32_t, const T&)`           |       |    X     |     |               |         |
+| `void insert(uint32_t, NodeType)`           |       |    X     |     |               |         |
+| `void remove(uint32_t)`                     |       |    X     |     |               |         |
+| `void pop_back()`                           |       |    X     |     |               |         |
+|                                             |       |          |     |               |         |
+| `bool hasKey(const std::string&)`           |       |          |  X  |               |         |
+| `Node operator[](const std::string&)`       |       |          |  X  |               |         |
+| `void insert(const std::string&, const T&)` |       |          |  X  |               |         |
+| `void insert(const std::string&, NodeType)` |       |          |  X  |               |         |
+| `bool remove(const std::string&)`           |       |          |  X  |               |         |
 
 </details>
 

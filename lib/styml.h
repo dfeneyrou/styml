@@ -1583,6 +1583,21 @@ class Node
         return Node(elt->getSub(idx), _context);
     }
 
+    Node back() const
+    {
+        assert(_context && _eltIdx < (uint32_t)_context->elements.size());
+        detail::Element* elt = &_context->elements[_eltIdx];
+
+        if (elt->getType() != SEQUENCE) {
+            throwMessage<AccessException>("Access error: Access by 'back()' can only be used on SEQUENCE elements, not '%s'",
+                                          to_string().c_str());
+        }
+        if (elt->getSubQty()==0) {
+            throwMessage<AccessException>("Access error: Access by 'back()' on an empty SEQUENCE for '%s'", to_string().c_str());
+        }
+        return Node(elt->getSub(elt->getSubQty()-1), _context);
+    }
+
     template<class T>
     void push_back(const T& typedValue)
     {
