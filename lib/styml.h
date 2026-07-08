@@ -29,7 +29,7 @@
 // ==========================================================================================
 
 #define STYML_VERSION_MAJOR 1
-#define STYML_VERSION_MINOR 1
+#define STYML_VERSION_MINOR 2
 #define STYML_VERSION_PATCH 0
 #define STYML_VERSION       (STYML_VERSION_MAJOR * 100 * 100 + STYML_VERSION_MINOR * 100 + STYML_VERSION_PATCH)
 
