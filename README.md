@@ -74,6 +74,9 @@ The two main sections are:
 A `Document` is simply a (root) `Node` with 2 additional features:
  - it owns the YAML tree
    - its destruction releases the document. All `Node` objects related to it are invalidated and shall no more be used.
+   - as it owns its tree, a `Document` cannot be copied, only moved. To duplicate one, use `clone()` (available
+     on any `Node`, not just a `Document`'s root): it deep-copies the subtree into a brand new, fully independent
+     `Document`, without going through a `asYaml()` + `parse()` round-trip.
  - it owns the emission API
    - `std::string asPyStruct(bool withIndent = false) const` emits a Python evaluable string, compact (default) or with indent
    - `std::string asYaml() const` emits a YAML string
@@ -138,6 +141,7 @@ The `Node` API is restricted depending on its type, as shown in the table below 
 | `bool isSequence()`                         |   X   |    X     |  X  |       X       |    X    |
 | `bool isMap()`                              |   X   |    X     |  X  |       X       |    X    |
 | `bool isComment()`                          |   X   |    X     |  X  |       X       |    X    |
+| `Document clone() const`                    |   X   |    X     |  X  |       X       |    X    |
 |                                             |       |          |     |               |         |
 | `Node& operator=(const T&)`                 |   X   |    X     |  X  | X (via value) |         |
 | `Node& operator=(newKind)`                  |   X   |    X     |  X  | X (via value) |         |
@@ -152,18 +156,18 @@ The `Node` API is restricted depending on its type, as shown in the table below 
 |                                             |       |          |     |               |         |
 | `Node operator[](uint32_t)`                 |       |    X     |     |               |         |
 | `Node back()`                               |       |    X     |     |               |         |
-| `void push_back(const T&)`                  |       |    X     |     |               |         |
-| `void push_back(NodeType)`                  |       |    X     |     |               |         |
-| `void insert(uint32_t, const T&)`           |       |    X     |     |               |         |
-| `void insert(uint32_t, NodeType)`           |       |    X     |     |               |         |
+| `Node push_back(const T&)`                  |       |    X     |     |               |         |
+| `Node push_back(NodeType)`                  |       |    X     |     |               |         |
+| `Node insert(uint32_t, const T&)`           |       |    X     |     |               |         |
+| `Node insert(uint32_t, NodeType)`           |       |    X     |     |               |         |
 | `void remove(uint32_t)`                     |       |    X     |     |               |         |
 | `void pop_back()`                           |       |    X     |     |               |         |
 |                                             |       |          |     |               |         |
-| `bool hasKey(const std::string&)`           |       |          |  X  |               |         |
-| `Node operator[](const std::string&)`       |       |          |  X  |               |         |
-| `void insert(const std::string&, const T&)` |       |          |  X  |               |         |
-| `void insert(const std::string&, NodeType)` |       |          |  X  |               |         |
-| `bool remove(const std::string&)`           |       |          |  X  |               |         |
+| `bool hasKey(std::string_view)`             |       |          |  X  |               |         |
+| `Node operator[](std::string_view)`         |       |          |  X  |               |         |
+| `Node insert(std::string_view, const T&)`   |       |          |  X  |               |         |
+| `Node insert(std::string_view, NodeType)`   |       |          |  X  |               |         |
+| `bool remove(std::string_view)`             |       |          |  X  |               |         |
 
 </details>
 

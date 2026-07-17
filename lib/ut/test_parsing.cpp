@@ -23,7 +23,9 @@
 // SOFTWARE.
 
 #include <stdio.h>
+#include <string.h>
 
+#include <memory>
 #include <string>
 
 #include "styml.h"
@@ -145,5 +147,99 @@ a:
             const char* document = "- a\n\t- b";
             CHECK_PARSING_EXCEPTION("Parse error: using tabulation is not accepted for indentation");
         }
+
+        {
+            // Regression test: trailing junk after the chomp/indent indicators of a block scalar header
+            // used to be silently ignored (see the removed @TODO note next to the block scalar parsing).
+            const char* document = "a: |2+ +++2222++\n  abc\n";
+            CHECK_PARSING_EXCEPTION("Parse error: unexpected characters after the block scalar indicator");
+        }
+
+        {
+            // Regression test: \x escapes must be complete (2 hex digits) and valid
+            const char* document = "a: \"\\x4\"";
+            CHECK_PARSING_EXCEPTION("Parse error: invalid hexadecimal digit in '\\x' escape sequence");
+        }
+
+        {
+            const char* document = "a: \"\\x4g\"";
+            CHECK_PARSING_EXCEPTION("Parse error: invalid hexadecimal digit in '\\x' escape sequence");
+        }
+
+        {
+            // Enough characters remain (4), but one of them isn't a hex digit
+            const char* document = "a: \"\\u123g\"";
+            CHECK_PARSING_EXCEPTION("Parse error: invalid hexadecimal digit in '\\u' escape sequence");
+        }
+
+        {
+            // Not enough characters remain before the string closes
+            const char* document = "a: \"\\u12\"";
+            CHECK_PARSING_EXCEPTION("Parse error: truncated '\\u' escape sequence, expecting 4 hexadecimal digits");
+        }
+    }
+
+    TEST_CASE("1-Sanity   : Block scalar header is still accepted with a trailing comment")
+    {
+        // Regression test: a comment (with or without chomp/indent indicators) must remain accepted
+        // on the block scalar header line, as relied upon by test/patterns/3_misc*.yaml
+        Document root = parse("a: |2+  # a trailing comment\n  abc\n");
+        CHECK(root["a"].as<std::string>() == "abc\n");
+    }
+
+    TEST_CASE("1-Sanity   : Double-quote hexadecimal escapes")
+    {
+        // \xHH : 8-bit code point
+        CHECK(parse("a: \"\\x41\"")["a"].as<std::string>() == "A");
+        // \uHHHH : 16-bit code point, UTF-8 encoded
+        CHECK(parse("a: \"caf\\u00e9\"")["a"].as<std::string>() == "caf\xc3\xa9");
+        // \UHHHHHHHH : 32-bit code point, UTF-8 encoded
+        CHECK(parse("a: \"\\U0001F600\"")["a"].as<std::string>() == "\xf0\x9f\x98\x80");
+    }
+}
+
+// Regression tests for the raw parse(const char*, uint32_t) overload: it must not read past the
+// supplied buffer, so each input below is copied into an exact-size heap allocation with no
+// trailing NUL byte (unlike the parse(std::string&)/parse(const char*) convenience overloads,
+// which are always NUL-terminated). Run under ASan/UBSan to catch any out-of-bounds access.
+static Document
+parseUnterminated(const char* text)
+{
+    uint32_t                len = (uint32_t)strlen(text);
+    std::unique_ptr<char[]> buf(new char[len > 0 ? len : 1]);
+    memcpy(buf.get(), text, len);
+    return parse(buf.get(), len);  // buf is freed on return, even if parse() throws
+}
+
+TEST_SUITE("Buffer safety")
+{
+    TEST_CASE("1-Sanity   : Raw buffer without trailing NUL - single-quote closing spaces")
+    {
+        Document root = parseUnterminated("a: 'x'   ");
+        CHECK(root["a"].as<std::string>() == "x");
+    }
+
+    TEST_CASE("1-Sanity   : Raw buffer without trailing NUL - double-quote closing spaces")
+    {
+        Document root = parseUnterminated("a: \"x\"   ");
+        CHECK(root["a"].as<std::string>() == "x");
+    }
+
+    TEST_CASE("1-Sanity   : Raw buffer without trailing NUL - double-quote escaped newline continuation")
+    {
+        Document root = parseUnterminated("a: \"x\\\n   y\"");
+        CHECK(root["a"].as<std::string>() == "xy");
+    }
+
+    TEST_CASE("1-Sanity   : Raw buffer without trailing NUL - colon lookahead at buffer end")
+    {
+        Document root = parseUnterminated("a: 'x'");
+        CHECK(root["a"].as<std::string>() == "x");
+    }
+
+    TEST_CASE("1-Sanity   : Raw buffer without trailing NUL - blank first line of block scalar")
+    {
+        Document root = parseUnterminated("a: |\n  ");
+        CHECK(root.hasKey("a"));
     }
 }

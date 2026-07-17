@@ -41,10 +41,13 @@
 
 #include <cassert>
 #include <climits>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -129,7 +132,7 @@ inline void STYML_PRINTF_CHECK(4, 5)
 {
     assert(lineStartPtr);
     constexpr int BufferSize = 1024;
-    char                  tmpStr[BufferSize];
+    char          tmpStr[BufferSize];
 
     // Write the main message
     va_list args;
@@ -146,7 +149,7 @@ inline void STYML_PRINTF_CHECK(4, 5)
 
     // Add the line copy
     constexpr int LineCopySize = 128;
-    const char* endLinePtr = lineStartPtr;
+    const char*   endLinePtr   = lineStartPtr;
     while (endLinePtr < endBufPtr && *endLinePtr != '\0' && *endLinePtr != '\r' && *endLinePtr != '\n' &&
            (endLinePtr - lineStartPtr) < LineCopySize)
         ++endLinePtr;
@@ -160,7 +163,7 @@ inline void STYML_PRINTF_CHECK(4, 5)
             if (lengthToWrite > toCopy) {
                 memcpy(tmpStr + alreadyWritten, "...", 3);
                 alreadyWritten += 3;
-    }
+            }
             tmpStr[alreadyWritten++] = '\"';
         }
     }
@@ -245,13 +248,48 @@ struct convert<UnsignedInt, std::enable_if_t<std::is_integral<UnsignedInt>::valu
 
 template<class Float>
 struct convert<Float, std::enable_if_t<std::is_floating_point<Float>::value, void>> {
-    static std::string encode(const Float& typedValue) { return std::to_string(typedValue); }
-    static void        decode(const char* strValue, Float& typedValue)
+    static std::string encode(const Float& typedValue)
+    {
+        // std::to_string() always uses 6 digits after the decimal point: it silently loses precision for
+        // values that need more (e.g. 1./3. does not round-trip) and pads needless zeros for values that
+        // need fewer (e.g. 3.14 becomes "3.140000"). Instead, print with increasing precision until the
+        // value round-trips exactly, which yields the shortest lossless representation.
+        //
+        // Fixed-point ("%f") is tried first and preferred for readability (e.g. "100" rather than "1e+02"),
+        // for magnitudes where it stays reasonably short; everything else falls back to scientific ("%e").
+        // The comparisons below are false for NaN and true (out of range) for +/-Infinity, so both
+        // naturally skip the fixed-point attempt without any dedicated check.
+        char   buffer[64];
+        double magnitude = ((double)typedValue < 0) ? -(double)typedValue : (double)typedValue;
+        bool   tryFixed  = (magnitude == 0.0) || (magnitude >= 1e-4 && magnitude < 1e17);
+        if (tryFixed) {
+            for (int precision = 0; precision <= 17; ++precision) {
+                int written = snprintf(buffer, sizeof(buffer), "%.*f", precision, (double)typedValue);
+                if (written > 0 && (size_t)written < sizeof(buffer) && (Float)strtod(buffer, nullptr) == typedValue) {
+                    return std::string(buffer, (size_t)written);
+                }
+            }
+        }
+        for (int precision = 0; precision <= 17; ++precision) {
+            int written = snprintf(buffer, sizeof(buffer), "%.*e", precision, (double)typedValue);
+            if (written > 0 && (size_t)written < sizeof(buffer) && (Float)strtod(buffer, nullptr) == typedValue) {
+                return std::string(buffer, (size_t)written);
+            }
+        }
+        int written = snprintf(buffer, sizeof(buffer), "%.17g", (double)typedValue);  // Fallback (e.g. NaN)
+        return std::string(buffer, (size_t)std::max(written, 0));
+    }
+    static void decode(const char* strValue, Float& typedValue)
     {
         errno         = 0;
         char*  endptr = nullptr;
         double number = strtod(strValue, &endptr);
-        if (endptr == strValue || errno != 0) {
+        if (endptr == strValue) {
+            throwMessage<ConvertException>("Convert error: unable to convert the string into a floating point: '%s'", strValue);
+        }
+        // strtod() also sets errno=ERANGE on underflow (a valid subnormal result, or 0), not just on
+        // overflow: only reject the overflow case, where the returned magnitude is actually infinite.
+        if (errno == ERANGE && (number == HUGE_VAL || number == -HUGE_VAL)) {
             throwMessage<ConvertException>("Convert error: unable to convert the string into a floating point: '%s'", strValue);
         }
         if (*endptr != 0) {
@@ -297,6 +335,34 @@ to_string(NodeType t)
 namespace detail
 {
 
+// Growing pool for the small integer arrays used by MAP/SEQUENCE containers (Element's 'subs'). Allocations
+// are carved out of geometrically growing blocks instead of being individually new[]-ed per container
+// (which used to mean one heap allocation per container, and one per capacity growth, in documents with
+// many small sequences/maps). Like Context's string arena, entries are never individually freed: they are
+// only reclaimed when the whole pool is destroyed, consistent with how removed/overwritten elements already
+// leave their old storage behind for the lifetime of the document elsewhere in this codebase.
+class SubsPool
+{
+   public:
+    uint32_t* alloc(uint32_t capacity)
+    {
+        if (_blocks.empty() || _fillIdx + capacity > _blocks.back().size()) {
+            uint32_t blockSize = std::max(capacity, _nextBlockSize);
+            _blocks.emplace_back(blockSize);
+            _nextBlockSize = 2 * blockSize;
+            _fillIdx       = 0;
+        }
+        uint32_t* ptr = _blocks.back().data() + _fillIdx;
+        _fillIdx += capacity;
+        return ptr;
+    }
+
+   private:
+    std::vector<std::vector<uint32_t>> _blocks;
+    uint32_t                           _fillIdx       = 0;
+    uint32_t                           _nextBlockSize = 256;
+};
+
 // This structure represent one element of the tree, with a type (key, map, sequence or value), value or sub elements
 #pragma pack(push, 1)
 class Element
@@ -334,13 +400,13 @@ class Element
         typed.unknown = {0, 0, 0};
     }
 
-    void add(uint32_t eltIdx)
+    void add(SubsPool* pool, uint32_t eltIdx)
     {
         if (getType() == KEY) {
             typed.key.eltIdx = eltIdx;
         } else {
             assert(getType() == SEQUENCE || getType() == MAP);
-            ensureSpaceForOne();
+            ensureSpaceForOne(pool);
             typed.container.subs[typed.container.subQty++] = eltIdx;
         }
     }
@@ -349,11 +415,11 @@ class Element
         assert(getType() == KEY);
         return typed.key.eltIdx;  // Cannot be zero in practice, as it is root. So zero means no value
     }
-    void insert(uint32_t idx, uint32_t eltIdx)
+    void insert(SubsPool* pool, uint32_t idx, uint32_t eltIdx)
     {
         assert(getType() == SEQUENCE || getType() == MAP);
         assert(idx <= typed.container.subQty);
-        ensureSpaceForOne();
+        ensureSpaceForOne(pool);
         if (idx < typed.container.subQty) {
             memmove(typed.container.subs + idx + 1, typed.container.subs + idx, (typed.container.subQty - idx) * sizeof(int));
         }
@@ -377,7 +443,8 @@ class Element
     void clearSubs()
     {
         assert(getType() == SEQUENCE || getType() == MAP);
-        delete[] typed.container.subs;
+        // No delete[]: 'subs' is carved out of a SubsPool block, which is only reclaimed as a whole
+        // when the pool itself is destroyed (see SubsPool above).
         typed.container.subs   = nullptr;
         typed.container.subQty = 0;
         setCompound(0);  // Clear capacity
@@ -385,12 +452,14 @@ class Element
 
     void setString(uint32_t stringIdx, uint32_t stringSize)
     {
-        assert(getType() == KEY || getType() == VALUE);
+        // TypeKey, TypeValue and TypeComment all have stringIdx as their first field, at the same offset,
+        // so this is safe (and used) for all three kinds.
+        assert(getType() == KEY || getType() == VALUE || getType() == COMMENT);
         setCompound(std::min(stringSize, CompoundMask));
         typed.key.stringIdx = stringIdx;
     }
 
-    void setComment(uint32_t eltIdx)
+    void setComment(SubsPool* pool, uint32_t eltIdx)
     {
         assert(getType() != UNKNOWN);
         assert(eltIdx != 0);
@@ -401,7 +470,7 @@ class Element
         } else if (getType() == VALUE) {
             typed.value.commentIdx = eltIdx;
         } else if (getType() == MAP || getType() == SEQUENCE) {
-            add(eltIdx);  // No dedicated field, so we just add the comment node
+            add(pool, eltIdx);  // No dedicated field, so we just add the comment node
         }
     }
 
@@ -461,14 +530,13 @@ class Element
     }
 
    private:
-    void ensureSpaceForOne()
+    void ensureSpaceForOne(SubsPool* pool)
     {
         if (typed.container.subQty >= getCompound()) {
             uint32_t subCapacity = std::max((uint32_t)1, 2 * getCompound());
             setCompound(subCapacity);
-            uint32_t* newSubs = new uint32_t[subCapacity];
+            uint32_t* newSubs = pool->alloc(subCapacity);
             if (typed.container.subQty) { memcpy(newSubs, typed.container.subs, typed.container.subQty * sizeof(uint32_t)); }
-            delete[] typed.container.subs;
             typed.container.subs = newSubs;
         }
     }
@@ -639,9 +707,7 @@ class Context
     void addString(const char* text, uint32_t textSize, uint32_t& stringIdx, uint32_t& stringSize)
     {
         constexpr uint32_t MaxStringSize = (1U << 29) - 1;
-        if (textSize >= MaxStringSize) {
-            throwMessage<Exception>("String too large for STYML (max %u bytes)", MaxStringSize - 1);
-        }
+        if (textSize >= MaxStringSize) { throwMessage<Exception>("String too large for STYML (max %u bytes)", MaxStringSize - 1); }
         stringIdx  = (uint32_t)arena.size();
         stringSize = textSize + 1;  // +1 for zero termination of the string
         if (arena.size() + stringSize > UINT_MAX) { throwMessage<Exception>("Total document size too large (> 4GB)"); }
@@ -764,6 +830,9 @@ class Context
                     strncmp(getString(childElt->getStringIdx()), key, keySize) == 0) {
                     uint32_t oldChildIndex = _entries[idx + cellId].childIndex;
                     _entries[idx + cellId] = {Tombstone, UINT_MAX};
+                    --_entryQty;  // Otherwise repeated remove()/insert() cycles would grow the table without bound: resize()'s
+                                  // load-factor check uses _entryQty, but only the entries actually copied during a resize (which
+                                  // correctly drops tombstones) reflect true occupancy, not this counter, unless kept in sync here.
                     return oldChildIndex;
                 }
             }
@@ -773,14 +842,14 @@ class Context
             ++probeIncr;  // Between linear and quadratic probing
         }
 
-        // Key not present (weird in current project)
-        assert(false && "Key not present");
+        // Key not present: this is a normal outcome (e.g. Node::remove() on a non-existent key), not a corrupted state
         return UINT_MAX;
     }
 
     // Public fields
     std::vector<Element> elements;
     std::vector<uint8_t> arena;
+    SubsPool             subs;  // Pool backing every MAP/SEQUENCE Element's 'subs' array (see SubsPool)
 
    private:
     void resize(uint32_t newMaxSize)
@@ -1185,38 +1254,39 @@ dumpAsYaml(Context* context)
                 const char* text     = context->getString(v->getStringIdx());
                 uint32_t    textSize = v->getStringSize() - 1;  // Remove terminating zero
                 uint32_t    idx      = 0;
-                // Select the kind of emitted string: plain, single quote, double quote, literal
-                // In this order:
-                // 1) plain scalar, if does not start with " >|\"\'", does not end with " ", and does not contain ": " or " #", or any of
-                // "\t\r\n".
-                // 2) else single quote if no \n
-                // 3) else double quote (arbitrary choice) if no \n in the middle (but accepted at the end as it does not help the visual.
-                // Literal code is there but not used at the moment, as it may make the text harder to read
-                bool isPlain      = (text[idx] != ' ' && text[idx] != '>' && text[idx] != '|' && text[idx] != '\'' && text[idx] != '\"' &&
-                                text[textSize - 1] != ' ');
-                int  newLineCount = 0;
+                // Select the kind of emitted string: plain, single quote, or double quote. In this order:
+                // 1) plain scalar, if it does not start with " >|\"\'", does not end with " ", does not contain
+                //    ": ", " #", or any of "\t\r\n", is not itself a lone "-", and does not start with "- "
+                // 2) else single quote, if it contains no \r or \n (a physical line break inside a quoted scalar
+                //    folds into a space per YAML's line-folding rules, so single quote cannot losslessly represent
+                //    either; \t is fine here, as it is not treated as a line boundary)
+                // 3) else double quote, which can escape \t, \r and \n losslessly
+                //
+                // The trailing-colon and leading-dash checks below match the parser's own key/caret detection
+                // (getToken()): a value ending in ':' will always be followed there by whitespace or EOF once
+                // embedded in real YAML, which the parser reads as a key terminator regardless of where that
+                // whitespace/EOF falls; a value starting with '-' followed by space/EOF is read as a sequence
+                // caret. Emitting either as bare plain text would silently turn the value into structure on
+                // reparse.
+                bool isPlain = (text[idx] != ' ' && text[idx] != '>' && text[idx] != '|' && text[idx] != '\'' && text[idx] != '\"' &&
+                                text[textSize - 1] != ' ' &&
+                                !(text[idx] == '-' && (textSize == 1 || text[idx + 1] == ' ' || text[idx + 1] == '\r' ||
+                                                       text[idx + 1] == '\n')));
+                bool hasCrOrNl = false;
                 while (idx < textSize) {
                     char c = text[idx];
-                    if (c == '\n') ++newLineCount;
-                    if (isPlain && c == ':' && idx + 1 < textSize &&
-                        (text[idx + 1] == ' ' || text[idx + 1] == '\r' || text[idx + 1] == '\n'))
+                    if (c == '\r' || c == '\n') hasCrOrNl = true;
+                    if (isPlain && (c == '\t' || c == '\r' || c == '\n')) isPlain = false;  // No tab/CR/LF in plain style
+                    if (isPlain && c == ':' &&
+                        (idx + 1 == textSize || text[idx + 1] == ' ' || text[idx + 1] == '\r' || text[idx + 1] == '\n'))
                         isPlain = false;                                                             // No key-like text
                     if (isPlain && c == '#' && (idx == 0 || text[idx - 1] == ' ')) isPlain = false;  // No comment-like text
                     ++idx;
                 }
-                bool isSingleQuote = (newLineCount == 0);
-                if (!isPlain && newLineCount > 0) {
-                    // Select between case 3 and case 4 by removing the count of trailing newlines
-                    uint32_t lastIdx = textSize - 1;
-                    while (text[lastIdx] == '\n') {
-                        --newLineCount;
-                        --lastIdx;
-                        if (text[lastIdx] == '\r') { --lastIdx; }
-                    }
-                }
+                bool isSingleQuote = !hasCrOrNl;
 
                 // Output the string in the right format
-                if (isPlain && newLineCount == 0) {
+                if (isPlain) {
                     if (lastIsKey) { sh.addChar(' '); }
                     sh.addChunk(text, textSize);
                 } else if (isSingleQuote) {
@@ -1323,11 +1393,97 @@ dumpAsYaml(Context* context)
     return std::string(sh.arena.data(), sh.arena.size());
 }
 
+// Deep-copies the subtree rooted at 'srcIdx' (in 'src') into 'dst', returning the new root's index in
+// 'dst'. Fully iterative (an explicit work-list, not recursion), matching the style of the parser and the
+// two emitters above, so it stays safe on arbitrarily deep or wide documents rather than risking a stack
+// overflow. Two passes:
+//  1) Visit every reachable element once (order doesn't matter), reserving a placeholder slot for it in
+//     'dst' and recording the old -> new index mapping.
+//  2) Revisit each of them (now that every index it could reference already has a known new index) and
+//     fill in its real content: strings, structural links, comment chains, and (for MAP) accelerator
+//     hashtable entries.
+inline uint32_t
+cloneSubtree(Context* src, uint32_t srcIdx, Context* dst)
+{
+    // Pass 1: reserve a slot for every reachable element
+    std::vector<uint32_t> srcToDst(src->elements.size(), UINT_MAX);
+    std::vector<uint32_t> visitOrder;
+    std::vector<uint32_t> workList{srcIdx};
+    while (!workList.empty()) {
+        uint32_t idx = workList.back();
+        workList.pop_back();
+        if (srcToDst[idx] != UINT_MAX) continue;  // Not expected in a tree, but harmless if it ever happens
+
+        srcToDst[idx] = (uint32_t)dst->elements.size();
+        dst->elements.emplace_back(UNKNOWN);
+        visitOrder.push_back(idx);
+
+        const Element& e = src->elements[idx];
+        switch (e.getType()) {
+            case KEY:
+                workList.push_back(e.getKeyValue());
+                break;
+            case MAP:
+            case SEQUENCE:
+                for (uint32_t i = 0; i < e.getSubQty(); ++i) { workList.push_back(e.getSub(i)); }
+                break;
+            default:
+                break;
+        }
+        uint32_t nextComment = e.getNextCommentIndex();
+        if (nextComment != 0) { workList.push_back(nextComment); }
+    }
+
+    // Pass 2: fill in the real content, now that every referenced index has a known destination. Nothing
+    // in this pass grows dst->elements (all slots were reserved in pass 1), so holding a reference into
+    // it across the calls below is safe.
+    for (uint32_t idx : visitOrder) {
+        const Element& e       = src->elements[idx];
+        uint32_t       dstIdx  = srcToDst[idx];
+        Element&       dstElt  = dst->elements[dstIdx];
+        NodeType       kind    = e.getType();
+
+        if (kind == KEY || kind == VALUE || kind == COMMENT) {
+            uint32_t stringIdx = 0, stringSize = 0;
+            dst->addString(src->getString(e.getStringIdx()), e.getStringSize() - 1, stringIdx, stringSize);
+            dstElt.reset(kind);
+            dstElt.setString(stringIdx, stringSize);
+            if (kind == KEY) { dstElt.add(&dst->subs, srcToDst[e.getKeyValue()]); }
+            if (kind == COMMENT && e.isStandalone()) { dstElt.setStandalone(); }
+        } else if (kind == MAP || kind == SEQUENCE) {
+            dstElt.reset(kind);
+            for (uint32_t i = 0; i < e.getSubQty(); ++i) {
+                uint32_t srcChildIdx = e.getSub(i);
+                uint32_t childDstIdx = srcToDst[srcChildIdx];
+                dstElt.add(&dst->subs, childDstIdx);
+                if (kind == MAP) {
+                    // Read the key string from 'src' (always fully valid, regardless of visit order),
+                    // not from 'dst': at this point in pass 2, the child may not have been revisited
+                    // yet, so its destination-side string wouldn't be filled in.
+                    const Element& srcChildElt = src->elements[srcChildIdx];
+                    if (srcChildElt.getType() == KEY) {
+                        dst->addMapChildIndex(dstIdx, src->getString(srcChildElt.getStringIdx()), srcChildElt.getStringSize() - 1, &dstElt,
+                                              dstElt.getSubQty() - 1);
+                    }
+                }
+            }
+        }
+        // UNKNOWN elements need no further work: pass 1 already emplaced them as UNKNOWN.
+
+        uint32_t nextComment = e.getNextCommentIndex();
+        if (nextComment != 0) { dstElt.setComment(&dst->subs, srcToDst[nextComment]); }
+    }
+
+    return srcToDst[srcIdx];
+}
+
 }  // namespace detail
 
 // ==========================================================================================
 // Public manipulation API
 // ==========================================================================================
+
+class Document;  // Forward declaration: Node::clone() returns a Document, defined further below
 
 class Node
 {
@@ -1341,27 +1497,48 @@ class Node
         : _eltIdx(eltIdx), _context(context), _nonExistingKey(std::move(nonExistingKey))
     {
     }
-    Node(Node&& rhs) noexcept
-    {
-        std::swap(_eltIdx, rhs._eltIdx);
-        std::swap(_context, rhs._context);
-        std::swap(_nonExistingKey, rhs._nonExistingKey);
-    }
+    // Node is a non-owning handle (it never owns the Context it points into: only Document does), so
+    // there is nothing for a "move" to usefully steal - unlike Document, it deliberately has no move
+    // constructor/assignment. Copy already does the only sensible thing (repoint the handle), and
+    // leaving move undeclared means rvalue arguments naturally fall back to the copy operations below,
+    // rather than to a swap that would (as it used to) silently strand a Document's Context: swapping a
+    // temporary Document's Context into a Node leaves nobody able to free it, since Node's destructor
+    // never does and the temporary's Context pointer has been nulled out from under it.
+    Node(const Node& rhs) : _eltIdx(rhs._eltIdx), _context(rhs._context), _nonExistingKey(rhs._nonExistingKey) {}
     Node& operator=(const Node& rhs)
     {
+        // Node is a non-owning handle: assignment repoints it (like a pointer or iterator), it does not
+        // copy the pointed-to document content. That has no sensible meaning when 'this' is itself a
+        // placeholder for a not-yet-existing map key (there is nothing yet to repoint), so reject it
+        // instead of silently discarding the assignment.
+        if (!_nonExistingKey.empty()) {
+            throwMessage<AccessException>(
+                "Access error: cannot assign a Node to the non-existing key '%s'; only typed values can auto-create a map entry",
+                _nonExistingKey.c_str());
+        }
         _eltIdx         = rhs._eltIdx;
         _context        = rhs._context;
         _nonExistingKey = rhs._nonExistingKey;
         return *this;
     }
-    Node& operator=(Node&& rhs) noexcept
-    {
-        std::swap(_eltIdx, rhs._eltIdx);
-        std::swap(_context, rhs._context);
-        std::swap(_nonExistingKey, rhs._nonExistingKey);
-        return *this;
-    }
-    Node(const Node& rhs) : _eltIdx(rhs._eltIdx), _context(rhs._context), _nonExistingKey(rhs._nonExistingKey) {}
+
+    // Constructing/assigning a Node from an rvalue of a more-derived, owning type (i.e. a temporary
+    // Document, such as the result of parse()) is rejected at compile time: the Node would end up either
+    // dangling (the temporary's destructor frees the Context Node just aliased) or, if that ownership
+    // were instead stolen away, permanently unreclaimed (Node's destructor never frees a Context). A
+    // named Document variable (an lvalue) is unaffected and remains fully supported, since it keeps
+    // managing its own lifetime independently of any Node alias into it.
+    template<class T, std::enable_if_t<std::is_base_of<Node, std::decay_t<T>>::value &&
+                                            !std::is_same<Node, std::decay_t<T>>::value &&
+                                            !std::is_lvalue_reference<T>::value,
+                                        int> = 0>
+    Node(T&&) = delete;
+    template<class T, std::enable_if_t<std::is_base_of<Node, std::decay_t<T>>::value &&
+                                            !std::is_same<Node, std::decay_t<T>>::value &&
+                                            !std::is_lvalue_reference<T>::value,
+                                        int> = 0>
+    Node& operator=(T&&) = delete;
+
     ~Node() = default;
 
     // Generic
@@ -1418,7 +1595,12 @@ class Node
         return typedValue;
     }
 
-    template<class T>
+    // Excludes Node (and anything derived from it, e.g. Document): without this, this template is an
+    // exact match for such arguments while operator=(const Node&) needs a derived-to-base conversion for
+    // Document, so overload resolution would prefer this value-encoding template over the intended
+    // handle-reassignment operator, e.g. turning 'node = someDocument' into a failed attempt to encode
+    // the Document as a string value instead of repointing 'node'.
+    template<class T, std::enable_if_t<!std::is_base_of<Node, T>::value, int> = 0>
     Node& operator=(const T& typedValue)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
@@ -1443,7 +1625,7 @@ class Node
             _context->elements.emplace_back(VALUE, stringIdx, stringSize);  // Create the value element
             _context->addString(_nonExistingKey.data(), (uint32_t)_nonExistingKey.size(), stringIdx, stringSize);
             _context->elements.emplace_back(KEY, stringIdx, stringSize, eltIdx);  // Create the key referring to the created value element
-            _context->elements[_eltIdx].add(eltIdx + 1);                          // Add the key to the parent
+            _context->elements[_eltIdx].add(&_context->subs, eltIdx + 1);         // Add the key to the parent
 
             // Update the access acceleration hashtable
             _context->addMapChildIndex(_eltIdx, _nonExistingKey.data(), (uint32_t)_nonExistingKey.size(), &_context->elements[_eltIdx],
@@ -1479,7 +1661,7 @@ class Node
             _context->elements.emplace_back(newKind);
             _context->addString(_nonExistingKey.data(), (uint32_t)_nonExistingKey.size(), stringIdx, stringSize);
             _context->elements.emplace_back(KEY, stringIdx, stringSize, eltIdx);
-            _context->elements[_eltIdx].add(eltIdx + 1);
+            _context->elements[_eltIdx].add(&_context->subs, eltIdx + 1);
 
             // Update the access acceleration hashtable
             _context->addMapChildIndex(_eltIdx, _nonExistingKey.data(), (uint32_t)_nonExistingKey.size(), &_context->elements[_eltIdx],
@@ -1592,14 +1774,14 @@ class Node
             throwMessage<AccessException>("Access error: Access by 'back()' can only be used on SEQUENCE elements, not '%s'",
                                           to_string().c_str());
         }
-        if (elt->getSubQty()==0) {
+        if (elt->getSubQty() == 0) {
             throwMessage<AccessException>("Access error: Access by 'back()' on an empty SEQUENCE for '%s'", to_string().c_str());
         }
-        return Node(elt->getSub(elt->getSubQty()-1), _context);
+        return Node(elt->getSub(elt->getSubQty() - 1), _context);
     }
 
     template<class T>
-    void push_back(const T& typedValue)
+    Node push_back(const T& typedValue)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
@@ -1619,10 +1801,11 @@ class Node
         _context->addString(encodedValue.data(), (uint32_t)encodedValue.size(), stringIdx, stringSize);
         uint32_t eltIdx = (uint32_t)_context->elements.size();
         _context->elements.emplace_back(VALUE, stringIdx, stringSize);
-        _context->elements[_eltIdx].add(eltIdx);
+        _context->elements[_eltIdx].add(&_context->subs, eltIdx);
+        return Node(eltIdx, _context);
     }
 
-    void push_back(const NodeType newKind)
+    Node push_back(const NodeType newKind)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
@@ -1639,11 +1822,12 @@ class Node
 
         uint32_t eltIdx = (uint32_t)_context->elements.size();
         _context->elements.emplace_back(newKind);
-        _context->elements[_eltIdx].add(eltIdx);
+        _context->elements[_eltIdx].add(&_context->subs, eltIdx);
+        return Node(eltIdx, _context);
     }
 
     template<class T>
-    void insert(uint32_t idx, const T& typedValue)
+    Node insert(uint32_t idx, const T& typedValue)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
@@ -1666,10 +1850,11 @@ class Node
         _context->addString(encodedValue.data(), (uint32_t)encodedValue.size(), stringIdx, stringSize);
         uint32_t eltIdx = (uint32_t)_context->elements.size();
         _context->elements.emplace_back(VALUE, stringIdx, stringSize);
-        _context->elements[_eltIdx].insert(idx, eltIdx);
+        _context->elements[_eltIdx].insert(&_context->subs, idx, eltIdx);
+        return Node(eltIdx, _context);
     }
 
-    void insert(uint32_t idx, const NodeType newKind)
+    Node insert(uint32_t idx, const NodeType newKind)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
@@ -1688,7 +1873,8 @@ class Node
         }
         uint32_t eltIdx = (uint32_t)_context->elements.size();
         _context->elements.emplace_back(newKind);
-        _context->elements[_eltIdx].insert(idx, eltIdx);
+        _context->elements[_eltIdx].insert(&_context->subs, idx, eltIdx);
+        return Node(eltIdx, _context);
     }
 
     void remove(uint32_t idx)
@@ -1723,28 +1909,28 @@ class Node
     // Map specific
     // ============
 
-    bool hasKey(const std::string& key) const
+    bool hasKey(std::string_view key) const
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
 
         if (elt->getType() != MAP) {
-            throwMessage<AccessException>("Access error: 'hasKey(%s)' can only be used on MAP elements, not '%s'", key.c_str(),
-                                          to_string().c_str());
+            throwMessage<AccessException>("Access error: 'hasKey(%s)' can only be used on MAP elements, not '%s'",
+                                          std::string(key).c_str(), to_string().c_str());
         }
         if (key.empty()) { throwMessage<AccessException>("Access error: empty key is not allowed to access a MAP element"); }
 
         return (_context->getMapChildIndex(_eltIdx, key.data(), (uint32_t)key.size(), elt) != UINT_MAX);
     }
 
-    Node operator[](const std::string& key) const
+    Node operator[](std::string_view key) const
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
 
         if (elt->getType() != MAP) {
-            throwMessage<AccessException>("Access error: Access by '[%s]' can only be used on MAP elements, not '%s'", key.c_str(),
-                                          to_string().c_str());
+            throwMessage<AccessException>("Access error: Access by '[%s]' can only be used on MAP elements, not '%s'",
+                                          std::string(key).c_str(), to_string().c_str());
         }
         if (key.empty()) { throwMessage<AccessException>("Access error: empty key is not allowed to access a MAP element"); }
         if (!_nonExistingKey.empty()) {
@@ -1755,28 +1941,29 @@ class Node
         uint32_t childIndex = _context->getMapChildIndex(_eltIdx, key.data(), (uint32_t)key.size(), elt);
         if (childIndex == UINT_MAX) {
             // Key is not present, return a node pointing on the table associated with a non-empty key
-            return Node(_eltIdx, _context, key);
+            return Node(_eltIdx, _context, std::string(key));
         }
         assert(childIndex < elt->getSubQty());
         return Node(_context->elements[elt->getSub(childIndex)].getKeyValue(), _context);
     }
 
     template<class T>
-    void insert(const std::string& key, const T& typedValue)
+    Node insert(std::string_view key, const T& typedValue)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
 
         if (elt->getType() != MAP) {
-            throwMessage<AccessException>("Access error: Access by '[%s]' can only be used on MAP elements, not '%s'", key.c_str(),
-                                          to_string().c_str());
+            throwMessage<AccessException>("Access error: Access by '[%s]' can only be used on MAP elements, not '%s'",
+                                          std::string(key).c_str(), to_string().c_str());
         }
         if (key.empty()) { throwMessage<AccessException>("Access error: empty key is not allowed to access a MAP element"); }
         if (!_nonExistingKey.empty()) {
             throwMessage<AccessException>("Access error: '%s' is a non-existent key in this MAP elements'", _nonExistingKey.c_str());
         }
         if (_context->getMapChildIndex(_eltIdx, key.data(), (uint32_t)key.size(), elt) != UINT_MAX) {
-            throwMessage<AccessException>("Access error: duplicated key are forbidden and the key '%s' is already present", key.c_str());
+            throwMessage<AccessException>("Access error: duplicated key are forbidden and the key '%s' is already present",
+                                          std::string(key).c_str());
         }
 
         uint32_t    stringIdx = 0, stringSize = 0;
@@ -1785,7 +1972,7 @@ class Node
             encodedValue = convert<T>::encode(typedValue);
         } catch (ConvertException& e) {
             throwMessage<AccessException>("Access error: encoding error when accessing '%s' with 'insert('%s', ...)':\n  %s",
-                                          to_string().c_str(), key.c_str(), e.what());
+                                          to_string().c_str(), std::string(key).c_str(), e.what());
         }
 
         _context->addString(encodedValue.data(), (uint32_t)encodedValue.size(), stringIdx, stringSize);
@@ -1793,21 +1980,22 @@ class Node
         _context->elements.emplace_back(VALUE, stringIdx, stringSize);  // Create the value element
         _context->addString(key.data(), (uint32_t)key.size(), stringIdx, stringSize);
         _context->elements.emplace_back(KEY, stringIdx, stringSize, eltIdx);  // Create the key referring to the created value element
-        _context->elements[_eltIdx].add(eltIdx + 1);                          // Add the key to the parent
+        _context->elements[_eltIdx].add(&_context->subs, eltIdx + 1);         // Add the key to the parent
 
         // Update the access acceleration hashtable
         _context->addMapChildIndex(_eltIdx, key.data(), (uint32_t)key.size(), &_context->elements[_eltIdx],
                                    _context->elements[_eltIdx].getSubQty() - 1);
+        return Node(eltIdx, _context);
     }
 
-    void insert(const std::string& key, const NodeType newKind)
+    Node insert(std::string_view key, const NodeType newKind)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
 
         if (elt->getType() != MAP) {
-            throwMessage<AccessException>("Access error: Access by '[%s]' can only be used on MAP elements, not '%s'", key.c_str(),
-                                          to_string().c_str());
+            throwMessage<AccessException>("Access error: Access by '[%s]' can only be used on MAP elements, not '%s'",
+                                          std::string(key).c_str(), to_string().c_str());
         }
         if (key.empty()) { throwMessage<AccessException>("Access error: empty key is not allowed to access a MAP element"); }
         if (!_nonExistingKey.empty()) {
@@ -1818,26 +2006,31 @@ class Node
                                           styml::to_string(newKind));
         }
         if (_context->getMapChildIndex(_eltIdx, key.data(), (uint32_t)key.size(), elt) != UINT_MAX) {
-            throwMessage<AccessException>("Access error: duplicated key are forbidden and the key '%s' is already present", key.c_str());
+            throwMessage<AccessException>("Access error: duplicated key are forbidden and the key '%s' is already present",
+                                          std::string(key).c_str());
         }
 
+        uint32_t stringIdx = 0, stringSize = 0;
         uint32_t eltIdx = (uint32_t)_context->elements.size();
-        _context->elements.emplace_back(newKind);
-        _context->elements[_eltIdx].add(eltIdx);
+        _context->elements.emplace_back(newKind);  // Create the value element
+        _context->addString(key.data(), (uint32_t)key.size(), stringIdx, stringSize);
+        _context->elements.emplace_back(KEY, stringIdx, stringSize, eltIdx);  // Create the key referring to the created value element
+        _context->elements[_eltIdx].add(&_context->subs, eltIdx + 1);        // Add the key to the parent
 
         // Update the access acceleration hashtable
         _context->addMapChildIndex(_eltIdx, key.data(), (uint32_t)key.size(), &_context->elements[_eltIdx],
                                    _context->elements[_eltIdx].getSubQty() - 1);
+        return Node(eltIdx, _context);
     }
 
-    bool remove(const std::string& key)
+    bool remove(std::string_view key)
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
 
         if (elt->getType() != MAP) {
-            throwMessage<AccessException>("Access error: 'remove(%s)' can only be used on MAP elements, not '%s'", key.c_str(),
-                                          to_string().c_str());
+            throwMessage<AccessException>("Access error: 'remove(%s)' can only be used on MAP elements, not '%s'",
+                                          std::string(key).c_str(), to_string().c_str());
         }
 
         uint32_t childIndex = _context->removeMapChildIndex(_eltIdx, key.data(), (uint32_t)key.size(), elt);
@@ -1879,6 +2072,12 @@ class Node
         return "[ Weird ]";
     }
 
+    // Deep-copies this node's subtree into a new, fully independent Document (its own Context: no
+    // storage is shared with the original). Unlike parse(asYaml()), this does not round-trip through
+    // text, so it is both faster and immune to any loss of fidelity that a text round-trip could risk.
+    // Defined below, once Document is a complete type.
+    Document clone() const;
+
     // Iterators
     // =========
 
@@ -1912,7 +2111,7 @@ class Node
         detail::Context* _context = nullptr;
     };
 
-    iterator begin()
+    iterator begin() const
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
@@ -1922,7 +2121,7 @@ class Node
         }
         return iterator(elt->getSubs(), _context);
     }
-    iterator end()
+    iterator end() const
     {
         assert(_context && _eltIdx < (uint32_t)_context->elements.size());
         detail::Element* elt = &_context->elements[_eltIdx];
@@ -1952,10 +2151,22 @@ class Document : public Node
         initFromContext();
     }
     Document(detail::Context* context) : Node(0, context) { initFromContext(); }
-    Document(Document&& rhs) noexcept : Node(std::move(static_cast<Node&>(rhs))) {}
+    // Unlike Node, Document owns its Context and must transfer that ownership correctly on move: swap
+    // with rhs (rather than plain-copy) so that whichever side ends up holding the real Context is the
+    // one whose destructor frees it, and the other is left holding what was previously here (nullptr for
+    // the constructor, since *this starts default-constructed; *this's previous Context for the
+    // assignment operator, which rhs's own destructor will then correctly free).
+    Document(Document&& rhs) noexcept
+    {
+        std::swap(_eltIdx, rhs._eltIdx);
+        std::swap(_context, rhs._context);
+        std::swap(_nonExistingKey, rhs._nonExistingKey);
+    }
     Document& operator=(Document&& rhs) noexcept
     {
-        Node::operator=(std::move(static_cast<Node&>(rhs)));
+        std::swap(_eltIdx, rhs._eltIdx);
+        std::swap(_context, rhs._context);
+        std::swap(_nonExistingKey, rhs._nonExistingKey);
         return *this;
     }
     Document(const Document& rhs) = delete;
@@ -1965,6 +2176,22 @@ class Document : public Node
 
     std::string asPyStruct(bool withIndent = false) const { return dumpAsPyStruct(_context, withIndent); }
     std::string asYaml() const { return dumpAsYaml(_context); }
+
+    // A comment appearing before the very first key/value in a document (e.g. "# leading comment\n...")
+    // is attached to the invisible synthetic root KEY element (index 0) that every Context starts with,
+    // not to the document's actual content - which is what Node::clone() clones, since that is what
+    // every other Node-level operation (this Document's own _eltIdx, in particular) operates on. Carry
+    // that comment over too, so a whole-document clone's asYaml() matches the original's exactly.
+    Document clone() const
+    {
+        Document copy           = Node::clone();
+        uint32_t srcCommentIdx  = _context->elements[0].getNextCommentIndex();
+        if (srcCommentIdx != 0) {
+            uint32_t dstCommentIdx = detail::cloneSubtree(_context, srcCommentIdx, copy._context);
+            copy._context->elements[0].setComment(&copy._context->subs, dstCommentIdx);
+        }
+        return copy;
+    }
 
    private:
     void initFromContext()
@@ -1978,6 +2205,21 @@ class Document : public Node
         }
     }
 };
+
+inline Document
+Node::clone() const
+{
+    assert(_context && _eltIdx < (uint32_t)_context->elements.size());
+    if (!_nonExistingKey.empty()) {
+        throwMessage<AccessException>("Access error: cannot clone the non-existing key '%s'", _nonExistingKey.c_str());
+    }
+    detail::Context* newContext = new detail::Context();
+    newContext->elements.emplace_back(KEY);
+    newContext->addString("", 0, &newContext->elements.back());  // Empty key name for root, matching parse()/Document()
+    uint32_t clonedIdx = detail::cloneSubtree(_context, _eltIdx, newContext);
+    newContext->elements[0].add(&newContext->subs, clonedIdx);
+    return Document(newContext);
+}
 
 // ==========================================================================================
 // Parsing
@@ -1996,6 +2238,37 @@ struct TokenParser {
     uint32_t  stringSize  = 0;
     explicit  operator bool() const { return isValid; }
 };
+
+// Returns the value of an hexadecimal digit, or -1 if 'c' is not one
+inline int
+hexDigitValue(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// Appends the UTF-8 encoding of a Unicode code point (as decoded from a \x, \u or \U escape)
+inline void
+appendUtf8(StringHelper& sh, uint32_t codepoint)
+{
+    if (codepoint <= 0x7F) {
+        sh.addChar((char)codepoint);
+    } else if (codepoint <= 0x7FF) {
+        sh.addChar((char)(0xC0 | (codepoint >> 6)));
+        sh.addChar((char)(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint <= 0xFFFF) {
+        sh.addChar((char)(0xE0 | (codepoint >> 12)));
+        sh.addChar((char)(0x80 | ((codepoint >> 6) & 0x3F)));
+        sh.addChar((char)(0x80 | (codepoint & 0x3F)));
+    } else {
+        sh.addChar((char)(0xF0 | (codepoint >> 18)));
+        sh.addChar((char)(0x80 | ((codepoint >> 12) & 0x3F)));
+        sh.addChar((char)(0x80 | ((codepoint >> 6) & 0x3F)));
+        sh.addChar((char)(0x80 | (codepoint & 0x3F)));
+    }
+}
 
 inline TokenParser
 getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, StringHelper& sh, int& colNbr, int& lineNbr, uint32_t& idx)
@@ -2037,7 +2310,8 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
         return {true, TokenType::Caret, startColNbr, 0, 0};
     }
 
-    // Case "#" (comment) @FIX should be preceded by space or equivalent
+    // Case "#" (comment): valid at start of line, after whitespace, or immediately after a closing quote
+    // (which unambiguously ends the value, so no separating space is required there; see 1_comment_inline test).
     if (firstChar == '#') {
         // Find the end of the line and return the comment. The newline will be handled in another call
         uint32_t startIdx = idx + 1;
@@ -2072,7 +2346,6 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
         mlType = firstChar;
         ++idx;
         ++colNbr;
-        // @TODO Add check for unwanted characters
         for (int i = 0; i < 2; ++i) {  // Two passes as we shall extract 2 infos (chomp & indent) in any order
             if (idx >= endIdx) { break; }
             if (text[idx] == '+' || text[idx] == '-') {
@@ -2090,8 +2363,16 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                 ++colNbr;
             }
         }
-        // @TODO: Go to endline (and check that there is only blanks except comment (to skip)...) and generate errors
-        //        Current behavior is just ignoring the rest of the line, which allows things like "2+ +++2222++"
+        // The rest of the header line must be blank, optionally followed by a comment; anything else (e.g.
+        // stray characters after the chomp/indent indicators) is rejected instead of being silently ignored.
+        {
+            uint32_t afterHeaderIdx = idx;
+            while (afterHeaderIdx < endIdx && (text[afterHeaderIdx] == ' ' || text[afterHeaderIdx] == '\t')) ++afterHeaderIdx;
+            if (afterHeaderIdx < endIdx && text[afterHeaderIdx] != '\n' && text[afterHeaderIdx] != '\r' && text[afterHeaderIdx] != '#') {
+                throwParsing(lineNbr, text + initIdx, text + endIdx,
+                             "Parse error: unexpected characters after the block scalar indicator '%c'", firstChar);
+            }
+        }
         while (idx < endIdx && text[idx] != '\n' && text[idx] != '\r') { ++idx; }
         if (idx + 1 < endIdx && text[idx] == '\r' && text[idx + 1] == '\n') { ++idx; }
         ++idx;
@@ -2121,7 +2402,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
         uint32_t effectiveIndent = (uint32_t)(nonSpaceIdx - idx);
         if (targetIndent < 0) {
             // Initial empty line case
-            if (text[nonSpaceIdx] == '\n' || text[nonSpaceIdx] == '\r') {  // @BUG Need to handle comments too
+            if (nonSpaceIdx < endIdx && (text[nonSpaceIdx] == '\n' || text[nonSpaceIdx] == '\r')) {  // @BUG Need to handle comments too
                 if (sh.empty()) {
                     sh.addLine("", 0);
                 } else {
@@ -2173,7 +2454,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
             if (lineEndIdx < endIdx && text[lineEndIdx] == '\'') {
                 isEndOfStringReached = true;
                 ++lineEndIdx;  // Skip single quote
-                while (text[lineEndIdx] == ' ' || text[lineEndIdx] == '\t') { ++lineEndIdx; }
+                while (lineEndIdx < endIdx && (text[lineEndIdx] == ' ' || text[lineEndIdx] == '\t')) { ++lineEndIdx; }
             }
             if (!isEndOfStringReached && nonSpaceIdx == lineEndIdx) { sh.addLine("\n", 1); }
         }  // End of single quote case
@@ -2212,9 +2493,29 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
                         if (text[lineEndIdx] == '\r') ++lineEndIdx;
                         if (text[lineEndIdx] == '\n') ++lineEndIdx;
                         // Skip next line spaces
-                        while (text[lineEndIdx] == ' ') ++lineEndIdx;
+                        while (lineEndIdx < endIdx && text[lineEndIdx] == ' ') ++lineEndIdx;
                         --lineEndIdx;
-                    } else {  // Fallback @TODO Handle \x, \u and \U
+                    } else if (text[lineEndIdx] == 'x' || text[lineEndIdx] == 'u' || text[lineEndIdx] == 'U') {
+                        // \xHH (8 bits), \uHHHH (16 bits) or \UHHHHHHHH (32 bits): a Unicode code point in hexadecimal
+                        char     escapeLetter = text[lineEndIdx];
+                        uint32_t digitCount   = (escapeLetter == 'x') ? 2 : (escapeLetter == 'u') ? 4 : 8;
+                        if (lineEndIdx + digitCount >= endIdx) {
+                            throwParsing(lineNbr, text + initIdx, text + endIdx,
+                                         "Parse error: truncated '\\%c' escape sequence, expecting %u hexadecimal digits", escapeLetter,
+                                         digitCount);
+                        }
+                        uint32_t codepoint = 0;
+                        for (uint32_t d = 1; d <= digitCount; ++d) {
+                            int digitValue = hexDigitValue(text[lineEndIdx + d]);
+                            if (digitValue < 0) {
+                                throwParsing(lineNbr, text + initIdx, text + endIdx,
+                                             "Parse error: invalid hexadecimal digit in '\\%c' escape sequence", escapeLetter);
+                            }
+                            codepoint = (codepoint << 4) | (uint32_t)digitValue;
+                        }
+                        appendUtf8(sh, codepoint);
+                        lineEndIdx += digitCount;
+                    } else {  // Fallback: unknown escape sequence, kept as-is (backslash + character)
                         sh.addChar('\\');
                         sh.addChar(text[lineEndIdx]);
                     }
@@ -2227,7 +2528,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
             if (lineEndIdx < endIdx && text[lineEndIdx] == '\"') {
                 isEndOfStringReached = true;
                 ++lineEndIdx;  // Skip double quote
-                while (text[lineEndIdx] == ' ' || text[lineEndIdx] == '\t') { ++lineEndIdx; }
+                while (lineEndIdx < endIdx && (text[lineEndIdx] == ' ' || text[lineEndIdx] == '\t')) { ++lineEndIdx; }
             }
             if (!isEndOfStringReached && nonSpaceIdx == lineEndIdx) { sh.addLine("\n", 1); }
         }  // End of double quote case
@@ -2296,7 +2597,7 @@ getToken(const char* text, uint32_t endIdx, int parentIndent, Context* context, 
             lineEndIdx + ((lineEndIdx + 1 < endIdx && text[lineEndIdx] == '\r' && text[lineEndIdx + 1] == '\n') ? 2 : 1);
         sh.endLine();
 
-        if (isEndOfStringReached && text[lineEndIdx] == ':' &&
+        if (isEndOfStringReached && lineEndIdx < endIdx && text[lineEndIdx] == ':' &&
             (lineEndIdx + 1 == endIdx || text[lineEndIdx + 1] == ' ' || text[lineEndIdx + 1] == '\n' || text[lineEndIdx + 1] == '\r')) {
             isKey = true;
             ++lineEndIdx;  // Skip colon
@@ -2411,7 +2712,7 @@ parse(const char* text, uint32_t textSize)
                 if (elements[parentCommentEltIdx].getType() != UNKNOWN) {
                     uint32_t tmpIdx = 0;
                     while ((tmpIdx = elements[parentCommentEltIdx].getNextCommentIndex()) != 0) { parentCommentEltIdx = tmpIdx; }
-                    elements[parentCommentEltIdx].setComment(eltIdx);
+                    elements[parentCommentEltIdx].setComment(&context->subs, eltIdx);
                 }
             } break;
 
@@ -2463,7 +2764,7 @@ parse(const char* text, uint32_t textSize)
                         uint32_t eltIdx = (uint32_t)elements.size();
                         elements.emplace_back(SEQUENCE);
                         stack.emplace_back(eltIdx, colNbr, colNbr);
-                        elements[parent.eltIdx].add(eltIdx);
+                        elements[parent.eltIdx].add(&context->subs, eltIdx);
                         parent = stack.back();
                     }
                 }
@@ -2473,7 +2774,7 @@ parse(const char* text, uint32_t textSize)
                 uint32_t eltIdx = (uint32_t)elements.size();
                 elements.emplace_back(UNKNOWN);
                 stack.emplace_back(eltIdx, colNbr, -1);
-                elements[parent.eltIdx].add(eltIdx);
+                elements[parent.eltIdx].add(&context->subs, eltIdx);
                 parent = stack.back();
 
             } break;
@@ -2521,7 +2822,7 @@ parse(const char* text, uint32_t textSize)
                         uint32_t eltIdx = (uint32_t)elements.size();
                         elements.emplace_back(MAP);
                         stack.emplace_back(eltIdx, parent.indent, -1);
-                        elements[parent.eltIdx].add(eltIdx);
+                        elements[parent.eltIdx].add(&context->subs, eltIdx);
                         parent = stack.back();
                     }
                 }
@@ -2532,7 +2833,7 @@ parse(const char* text, uint32_t textSize)
                 elements.emplace_back(KEY, token.stringIdx, token.stringSize);
                 stack.emplace_back(eltIdx, colNbr, -1);
                 assert(elements[parent.eltIdx].getType() != KEY || elements[parent.eltIdx].getSubQty() == 0);
-                elements[parent.eltIdx].add(eltIdx);
+                elements[parent.eltIdx].add(&context->subs, eltIdx);
                 if (!context->addMapChildIndex(parent.eltIdx, context->getString(token.stringIdx), token.stringSize - 1,
                                                &elements[parent.eltIdx], elements[parent.eltIdx].getSubQty() - 1)) {
                     throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
@@ -2546,7 +2847,7 @@ parse(const char* text, uint32_t textSize)
                 eltIdx = (uint32_t)elements.size();
                 elements.emplace_back(UNKNOWN);
                 stack.emplace_back(eltIdx, colNbr, -1);
-                elements[parent.eltIdx].add(eltIdx);
+                elements[parent.eltIdx].add(&context->subs, eltIdx);
                 parent = stack.back();
             } break;
 
@@ -2565,7 +2866,8 @@ parse(const char* text, uint32_t textSize)
                                  parent.childIndent);
                 }
                 if (elements[parent.eltIdx].getType() == MAP) {
-                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize, "Parse error: in a map, a value without a key is forbidden");
+                    throwParsing(tokenLineNbr, text + tokenIdx, text + textSize,
+                                 "Parse error: in a map, a value without a key is forbidden");
                 }
                 if (parent.childIndent < 0) {
                     stack.back().childIndent = colNbr;
@@ -2583,7 +2885,7 @@ parse(const char* text, uint32_t textSize)
                     assert(parentElt.getType() != KEY || parentElt.getSubQty() == 0);  // Container or not a key already with value
                     uint32_t eltIdx = (uint32_t)elements.size();
                     elements.emplace_back(VALUE, token.stringIdx, token.stringSize);
-                    elements[parent.eltIdx].add(eltIdx);
+                    elements[parent.eltIdx].add(&context->subs, eltIdx);
                 }
 
                 // If the parent is a key, pop it from the stack (container with only 1 child)
