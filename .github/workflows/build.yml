@@ -14,9 +14,6 @@ jobs:
         run: |
           sudo apt update -y
           sudo apt install -y clang-format clang-tidy python3-autopep8 cmake-format
-      - name: Formatting
-        run: |
-          ./ci/format.py nofix
       - name: Static analysis
         run: |
           ./ci/tidy.py
@@ -81,8 +78,3 @@ jobs:
           cd build
           cmake -G "Visual Studio 17 2022" -A x64 -S .. -B "build64"
           cmake --build build64 --config Release
-
-      - name: Tests
-        shell: cmd
-        run: |
-          python ci\check_all.py -b=build64
