@@ -1256,7 +1256,10 @@ dumpAsYaml(Context* context)
                 uint32_t    idx      = 0;
                 // Select the kind of emitted string: plain, single quote, or double quote. In this order:
                 // 1) plain scalar, if it does not start with " >|\"\'", does not end with " ", does not contain
-                //    ": ", " #", or any of "\t\r\n", is not itself a lone "-", and does not start with "- "
+                //    ": ", " #", or any of "\t\r\n", is not itself a lone "-", and does not start with "- "; nor
+                //    with any other indicator that a full YAML 1.2 parser reads as structure there: "{}[],&*!%@`",
+                //    and "?" or ":" followed by space/EOF. StrictYAML would read those plain, but quoting them costs
+                //    nothing and keeps the output readable as the same strings by any YAML parser
                 // 2) else single quote, if it contains no \r or \n (a physical line break inside a quoted scalar
                 //    folds into a space per YAML's line-folding rules, so single quote cannot losslessly represent
                 //    either; \t is fine here, as it is not treated as a line boundary)
@@ -1268,10 +1271,11 @@ dumpAsYaml(Context* context)
                 // whitespace/EOF falls; a value starting with '-' followed by space/EOF is read as a sequence
                 // caret. Emitting either as bare plain text would silently turn the value into structure on
                 // reparse.
+                const bool isSpaceNext =
+                    (textSize == 1 || text[idx + 1] == ' ' || text[idx + 1] == '\r' || text[idx + 1] == '\n');
                 bool isPlain = (text[idx] != ' ' && text[idx] != '>' && text[idx] != '|' && text[idx] != '\'' && text[idx] != '\"' &&
-                                text[textSize - 1] != ' ' &&
-                                !(text[idx] == '-' && (textSize == 1 || text[idx + 1] == ' ' || text[idx + 1] == '\r' ||
-                                                       text[idx + 1] == '\n')));
+                                text[textSize - 1] != ' ' && !((text[idx] == '-' || text[idx] == '?' || text[idx] == ':') && isSpaceNext) &&
+                                StringHelper::findFirstOf<11>(text, 1, "{}[],&*!%@`", 0) == UINT_MAX);
                 bool hasCrOrNl = false;
                 while (idx < textSize) {
                     char c = text[idx];
