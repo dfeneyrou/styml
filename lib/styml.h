@@ -226,8 +226,35 @@ struct convert<SignedInt, std::enable_if_t<std::is_integral<SignedInt>::value &&
     }
 };
 
+// Encoded as "1"/"0" (as when it went through the unsigned integer converter); decoded from those or from the usual words
+template<>
+struct convert<bool> {
+    static std::string encode(const bool& typedValue) { return typedValue ? "1" : "0"; }
+    static void        decode(const char* strValue, bool& typedValue)
+    {
+        static const char* const trueWords[]  = {"1", "true", "True", "TRUE", "on", "On"};
+        static const char* const falseWords[] = {"0", "false", "False", "FALSE", "off", "Off"};
+        for (const char* w : trueWords) {
+            if (strcmp(strValue, w) == 0) {
+                typedValue = true;
+                return;
+            }
+        }
+        for (const char* w : falseWords) {
+            if (strcmp(strValue, w) == 0) {
+                typedValue = false;
+                return;
+            }
+        }
+        throwMessage<ConvertException>(
+            "Convert error: unable to convert the string into a boolean (true/false, on/off, 1/0): '%s'", strValue);
+    }
+};
+
 template<class UnsignedInt>
-struct convert<UnsignedInt, std::enable_if_t<std::is_integral<UnsignedInt>::value && !std::is_signed<UnsignedInt>::value, void>> {
+struct convert<UnsignedInt, std::enable_if_t<std::is_integral<UnsignedInt>::value && !std::is_signed<UnsignedInt>::value &&
+                                                 !std::is_same<UnsignedInt, bool>::value,
+                                             void>> {
     static std::string encode(const UnsignedInt& typedValue) { return std::to_string(typedValue); }
     static void        decode(const char* strValue, UnsignedInt& typedValue)
     {
